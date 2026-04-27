@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'motion/react';
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
-  title: string;
+  title?: string;
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | '5xl' | '6xl' | '7xl';
 }
@@ -41,16 +41,18 @@ export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalPr
             exit={{ opacity: 0, scale: 0.95, y: 20 }} 
             className={`bg-white rounded-2xl shadow-xl w-full ${sizeClasses[size]} relative z-10 overflow-hidden flex flex-col max-h-[90vh]`}
           >
-            <div className="flex items-center justify-between p-4 sm:p-6 border-b border-slate-100 shrink-0">
-              <h3 className="text-lg font-extrabold text-slate-900">{title}</h3>
-              <button 
-                onClick={onClose} 
-                className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-4 sm:p-6 overflow-y-auto">
+            {title && (
+              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 shrink-0 bg-slate-50/60">
+                <h3 className="text-base font-extrabold text-slate-900 tracking-tight">{title}</h3>
+                <button 
+                  onClick={onClose} 
+                  className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-200 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+            <div className="overflow-y-auto px-6 py-5">
               {children}
             </div>
           </motion.div>

@@ -16,10 +16,16 @@ import {
 } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import { motion, AnimatePresence } from 'motion/react';
+import { useApiGet } from '../hooks/useApi';
+import { useAuth } from '../contexts/AuthContext';
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const location = useLocation();
+  const { data: curriculumData } = useApiGet<{ curriculums: any[] }>('/api/student/curriculum', []);
+  const { data: notificationsSummary } = useApiGet<{ unreadCount: number }>('/api/student/notifications/summary', []);
+  const notEnrolled = curriculumData && (!curriculumData.curriculums || curriculumData.curriculums.length === 0);
+  const { user } = useAuth();
 
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
@@ -68,15 +74,19 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           <nav className="space-y-1.5">
             {navigation.map((item) => {
               const isActive = location.pathname === item.href;
+              const isLearningLink = item.href !== '/dashboard';
+              const disabled = notEnrolled && isLearningLink;
               return (
                 <Link
                   key={item.name}
                   to={item.href}
+                  onClick={(e) => { if (disabled) e.preventDefault(); }}
                   className={`
                     group flex items-center px-4 py-3 text-sm font-semibold rounded-xl transition-all
                     ${isActive 
                       ? 'bg-white text-[#0084B4] shadow-[0_2px_10px_rgba(0,0,0,0.05)] border border-slate-100' 
                       : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}
+                    ${disabled ? 'opacity-50 cursor-not-allowed pointer-events-auto hover:bg-transparent hover:text-slate-500' : ''}
                   `}
                 >
                   <item.icon
@@ -86,7 +96,10 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
                     `}
                     aria-hidden="true"
                   />
-                  {item.name}
+                  <div className="flex-1">
+                    <div>{item.name}</div>
+                    {disabled && <div className="text-[10px] font-bold text-slate-400 mt-0.5">Assign class to unlock</div>}
+                  </div>
                 </Link>
               );
             })}
@@ -144,7 +157,9 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
             <div className="flex items-center space-x-4 sm:space-x-6">
               <button className="text-slate-400 hover:text-slate-600 transition-colors relative">
                 <Bell className="h-5 w-5" />
-                <span className="absolute top-0 right-0 block h-2 w-2 rounded-full bg-red-500 ring-2 ring-white" />
+                {!!notificationsSummary?.unreadCount && (
+                  <span className="absolute top-0 right-0 block h-2 w-2 rounded-full bg-red-500 ring-2 ring-white" />
+                )}
               </button>
               
               <button className="text-slate-400 hover:text-slate-600 transition-colors">
@@ -155,12 +170,16 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
 
               <div className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity">
                 <div className="text-right hidden md:block">
-                  <p className="text-sm font-bold text-slate-800 leading-none">Arjun Sharma</p>
-                  <p className="text-[11px] font-medium text-slate-500 mt-1">Grade 9 - Section B</p>
+                  <p className="text-sm font-bold text-slate-800 leading-none">{user?.name ?? user?.email ?? '—'}</p>
+                  <p className="text-[11px] font-medium text-slate-500 mt-1">
+                    {user?.role === 'student'
+                      ? (curriculumData?.curriculums?.[0]?.className ?? (notEnrolled ? 'Not enrolled' : '—'))
+                      : (user?.role ?? '')}
+                  </p>
                 </div>
                 <img
                   className="h-10 w-10 rounded-full object-cover border-2 border-white shadow-sm"
-                  src="https://api.dicebear.com/7.x/avataaars/svg?seed=Arjun"
+                  src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(user?.email ?? 'user')}`}
                   alt="Student profile"
                 />
               </div>

@@ -4,6 +4,8 @@ import {
   LayoutDashboard, 
   Calculator, 
   Users, 
+  ClipboardList,
+  Calendar as CalendarIcon,
   Settings, 
   LogOut,
   Bell,
@@ -22,6 +24,8 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
     { name: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
     { name: 'Math Curriculum', href: '/admin/curriculum', icon: Calculator },
     { name: 'Students', href: '/admin/students', icon: Users },
+    { name: 'Assignments', href: '/admin/assignments', icon: ClipboardList },
+    { name: 'Schedule', href: '/admin/schedule', icon: CalendarIcon },
   ];
 
   const bottomNavigation = [

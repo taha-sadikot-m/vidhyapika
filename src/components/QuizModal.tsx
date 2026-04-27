@@ -2,13 +2,14 @@ import React, { useState } from 'react';
 import { Modal } from './ui/Modal';
 import { Question } from '../types';
 import { CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
+import { MathRenderer } from './MathRenderer';
 
 interface QuizModalProps {
   isOpen: boolean;
   onClose: () => void;
   title: string;
   questions: Question[];
-  onSubmit: (score: number, total: number) => void;
+  onSubmit: (score: number, total: number, answers: Record<string, string>) => void;
   initialAnswers?: Record<string, string>;
   isReviewMode?: boolean;
 }
@@ -57,7 +58,7 @@ export function QuizModal({ isOpen, onClose, title, questions, onSubmit, initial
         score++;
       }
     });
-    onSubmit(score, questions.length);
+    onSubmit(score, questions.length, answers);
   };
 
   const calculateScore = () => {
@@ -87,7 +88,12 @@ export function QuizModal({ isOpen, onClose, title, questions, onSubmit, initial
             </div>
 
             <div className="mb-8">
-              <h3 className="text-lg font-bold text-slate-900 mb-6">{currentQuestion.text}</h3>
+              <div className="text-lg font-bold text-slate-900 mb-6">
+                <MathRenderer text={currentQuestion.text} block />
+              </div>
+              {currentQuestion.imageUrl && (
+                <img src={currentQuestion.imageUrl} alt="Question" className="max-h-48 rounded-xl mb-4 border border-slate-200" />
+              )}
               
               <div className="space-y-3">
                 {currentQuestion.options?.map((option, idx) => (
@@ -103,9 +109,19 @@ export function QuizModal({ isOpen, onClose, title, questions, onSubmit, initial
                     <span className="inline-block w-6 h-6 rounded-full border-2 border-current text-center leading-5 mr-3 text-sm font-bold">
                       {String.fromCharCode(65 + idx)}
                     </span>
-                    {option}
+                    <MathRenderer text={option} />
                   </button>
                 ))}
+                {currentQuestion.type === 'image_upload' && (
+                  <div className="border-2 border-dashed border-slate-200 rounded-xl p-6 text-center">
+                    <p className="text-sm text-slate-500 mb-2">Upload your handwritten solution</p>
+                    <input type="file" accept="image/*" className="text-sm text-slate-600" onChange={(e) => {
+                      if (e.target.files?.[0]) {
+                        handleOptionSelect(`[image: ${e.target.files[0].name}]`);
+                      }
+                    }} />
+                  </div>
+                )}
               </div>
             </div>
 
@@ -153,10 +169,10 @@ export function QuizModal({ isOpen, onClose, title, questions, onSubmit, initial
                     <div className="flex items-start gap-3">
                       {isCorrect ? <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0 mt-0.5" /> : <XCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />}
                       <div>
-                        <p className="font-bold text-slate-900 mb-2">{idx + 1}. {q.text}</p>
-                        <p className="text-sm text-slate-600 mb-1">Your answer: <span className="font-semibold">{answers[q.id]}</span></p>
-                        {!isCorrect && <p className="text-sm text-slate-600 mb-2">Correct answer: <span className="font-semibold">{q.correctAnswer}</span></p>}
-                        <p className="text-sm text-slate-500 mt-2 bg-white/50 p-2 rounded">{q.explanation}</p>
+                        <div className="font-bold text-slate-900 mb-2">{idx + 1}. <MathRenderer text={q.text} /></div>
+                        <p className="text-sm text-slate-600 mb-1">Your answer: <span className="font-semibold"><MathRenderer text={answers[q.id] ?? '—'} /></span></p>
+                        {!isCorrect && <p className="text-sm text-slate-600 mb-2">Correct: <span className="font-semibold"><MathRenderer text={q.correctAnswer ?? ''} /></span></p>}
+                        {q.explanation && <p className="text-sm text-slate-500 mt-2 bg-white/50 p-2 rounded">{q.explanation}</p>}
                       </div>
                     </div>
                   </div>

@@ -95,11 +95,12 @@ export interface Badge {
 export interface Question {
   id: string;
   text: string;
-  type: 'text' | 'mcq' | 'boolean';
+  type: 'text' | 'mcq' | 'boolean' | 'image_upload';
   options?: string[];
   correctAnswer: string;
   explanation: string;
   difficulty: 'Easy' | 'Medium' | 'Hard';
+  imageUrl?: string;
 }
 
 export interface QuizAttempt {

@@ -1,0 +1,11 @@
+{
+  "/api/student/curriculum/route": "app/api/student/curriculum/route.js",
+  "/api/student/notifications/summary/route": "app/api/student/notifications/summary/route.js",
+  "/api/student/assignments/route": "app/api/student/assignments/route.js",
+  "/api/student/schedule/route": "app/api/student/schedule/route.js",
+  "/api/student/achievements/route": "app/api/student/achievements/route.js",
+  "/api/student/me/route": "app/api/student/me/route.js",
+  "/api/student/activity/route": "app/api/student/activity/route.js",
+  "/[...slug]/page": "app/[...slug]/page.js",
+  "/page": "app/page.js"
+}
