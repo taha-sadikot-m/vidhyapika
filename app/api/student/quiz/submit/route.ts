@@ -16,6 +16,7 @@ import {
 } from "../../../../../backend/repositories/progressRepo";
 import { getUserById } from "../../../../../backend/repositories/userRepo";
 import { sendFlaggedAlert } from "../../../../../backend/services/notifications";
+import { evaluateSubjectiveAnswer } from "../../../../../backend/services/ai";
 import { z } from "zod";
 
 const SubmitSchema = z.object({
@@ -50,22 +51,37 @@ export async function POST(req: Request) {
       return Response.json({ error: "No questions found for this context" }, { status: 404 });
     }
 
-    // Score the attempt (image uploads are NOT auto-graded)
+    // Score the attempt using AI for subjective questions
     const answerMap = new Map(answers.map((a) => [a.questionId, a.answer]));
-    const scoredAnswers = questions.map((q) => {
+    const scoredAnswers = await Promise.all(questions.map(async (q) => {
       const studentAnswer = answerMap.get(q.id) ?? "";
-      const correct =
-        q.type === "image_upload"
-          ? false
-          : studentAnswer.toLowerCase().trim() === (q.correctAnswer ?? "").toLowerCase().trim();
-      return { questionId: q.id, answer: studentAnswer, correct };
-    });
+      let correct = false;
+      let aiReasoning = "";
 
-    // Only grade non-image questions. If a quiz is only image uploads, treat graded percentage as 100%.
-    const gradedAnswers = scoredAnswers.filter((a, idx) => questions[idx]?.type !== "image_upload");
-    const correctCount = gradedAnswers.filter((a) => a.correct).length;
+      if (q.type === "text" || q.type === "image_upload") {
+        if (!studentAnswer.trim()) {
+          correct = false;
+        } else {
+          const evalResult = await evaluateSubjectiveAnswer({
+            questionText: q.text,
+            correctAnswerText: q.correctAnswer ?? "",
+            studentAnswer,
+            type: q.type,
+          });
+          correct = evalResult.correct;
+          aiReasoning = evalResult.reasoning;
+        }
+      } else {
+        correct = studentAnswer.toLowerCase().trim() === (q.correctAnswer ?? "").toLowerCase().trim();
+      }
+      
+      return { questionId: q.id, answer: studentAnswer, correct, aiReasoning };
+    }));
+
+    // All questions are now graded
+    const correctCount = scoredAnswers.filter((a) => a.correct).length;
     const score = correctCount;
-    const total = gradedAnswers.length;
+    const total = scoredAnswers.length;
     const percentage = total > 0 ? (score / total) * 100 : 100;
 
     // Determine threshold
@@ -250,12 +266,17 @@ export async function POST(req: Request) {
         const scored = scoredAnswers.find((a) => a.questionId === q.id);
         return scored && !scored.correct;
       })
-      .map((q) => ({
-        questionId: q.id,
-        text: q.text,
-        studentAnswer: answerMap.get(q.id) ?? "",
-        correctAnswer: q.correctAnswer ?? "",
-      }));
+      .map((q) => {
+        const scored = scoredAnswers.find((a) => a.questionId === q.id);
+        return {
+          questionId: q.id,
+          text: q.text,
+          type: q.type,
+          studentAnswer: answerMap.get(q.id) ?? "",
+          correctAnswer: q.correctAnswer ?? "",
+          aiReasoning: scored?.aiReasoning ?? "",
+        };
+      });
 
     return Response.json({
       success: true,

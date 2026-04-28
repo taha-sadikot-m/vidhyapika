@@ -176,3 +176,49 @@ Tutor:`;
     return "I'm having trouble connecting right now. Please try again in a moment.";
   }
 }
+
+// ─── AI Answer Evaluation ─────────────────────────────────────────────────────
+
+export async function evaluateSubjectiveAnswer(params: {
+  questionText: string;
+  correctAnswerText: string;
+  studentAnswer: string;
+  type: "text" | "image_upload";
+}): Promise<{ correct: boolean; reasoning: string }> {
+  const ai = getGenAI();
+  const { questionText, correctAnswerText, studentAnswer, type } = params;
+
+  let parts: any[] = [];
+  
+  if (type === "image_upload" && studentAnswer.startsWith("data:image")) {
+    const match = studentAnswer.match(/^data:(image\/[a-zA-Z+.-]+);base64,(.+)$/);
+    if (match) {
+      const mimeType = match[1];
+      const data = match[2];
+      parts = [
+        { text: `Question: ${questionText}\nExpected criteria/answer: ${correctAnswerText}\n\nEvaluate the provided student work image. Does it correctly solve or answer the question according to the expected criteria? Respond in exact JSON: {"correct": true/false, "reasoning": "short explanation"}` },
+        { inlineData: { mimeType, data } }
+      ];
+    } else {
+      return { correct: false, reasoning: "Invalid image format." };
+    }
+  } else {
+    parts = [
+      { text: `Question: ${questionText}\nExpected answer: ${correctAnswerText}\nStudent answer: ${studentAnswer}\n\nEvaluate if the student answer is correct based on the expected answer. Be reasonably lenient with phrasing but strict on the core concept. Respond in exact JSON: {"correct": true/false, "reasoning": "short explanation"}` }
+    ];
+  }
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: parts,
+    });
+    const raw = response.text ?? "";
+    const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const parsed = JSON.parse(cleaned);
+    return { correct: !!parsed.correct, reasoning: parsed.reasoning || "" };
+  } catch (e) {
+    console.error("AI Evaluation error:", e);
+    return { correct: false, reasoning: "Failed to evaluate answer." };
+  }
+}

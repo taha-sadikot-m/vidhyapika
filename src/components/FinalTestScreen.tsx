@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Trophy, Sparkles, CheckCircle2, XCircle, ChevronRight,
   RotateCcw, ClipboardCheck, Brain, AlertTriangle, Star,
-  LayoutGrid, PlayCircle, HelpCircle
+  LayoutGrid, PlayCircle, HelpCircle, Upload, Loader2
 } from 'lucide-react';
 import { AIBadge } from './ui/AIBadge';
 import { AITeachingPanel } from './AITeachingPanel';
@@ -37,7 +37,8 @@ export function FinalTestScreen({
   const [answers, setAnswers]           = useState<Record<string, string>>({});
   const [score, setScore]               = useState(0);
   const [showConfetti, setShowConfetti] = useState(false);
-  const apiFailedQuestions              = useRef<{ questionId: string; text: string; studentAnswer?: string; correctAnswer?: string }[]>([]);
+  const [submitting, setSubmitting]     = useState(false);
+  const apiFailedQuestions              = useRef<{ questionId: string; text: string; type?: string; studentAnswer?: string; correctAnswer?: string; aiReasoning?: string }[]>([]);
 
   const q = questions[currentQ];
   const isLast = currentQ === questions.length - 1;
@@ -53,27 +54,34 @@ export function FinalTestScreen({
     explanation:   q.explanation,
   }));
 
-  function submitTest() {
-    let s = 0;
-    questions.forEach(q => { if (answers[q.id] === q.correctAnswer) s++; });
-    setScore(s);
-    setTestState('results');
+  async function submitTest() {
+    setSubmitting(true);
+    let localScore = 0;
+    questions.forEach(q => { if (answers[q.id] === q.correctAnswer) localScore++; });
     if (topicId) {
       const answersArray = Object.entries(answers).map(([questionId, answer]) => ({ questionId, answer }));
-      apiFetch<any>('/api/student/quiz/submit', {
-        method: 'POST',
-        body: JSON.stringify({
-          contextType: 'finaltest',
-          contextId: topicId,
-          topicId,
-          answers: answersArray,
-        }),
-      }).then(res => {
+      try {
+        const res = await apiFetch<any>('/api/student/quiz/submit', {
+          method: 'POST',
+          body: JSON.stringify({
+            contextType: 'finaltest',
+            contextId: topicId,
+            topicId,
+            answers: answersArray,
+          }),
+        });
         if (res.data?.failedQuestions) {
           apiFailedQuestions.current = res.data.failedQuestions;
         }
-      }).catch(() => {});
+        // Use server score (AI-evaluated) if available
+        if (typeof res.data?.score === 'number') {
+          localScore = res.data.score;
+        }
+      } catch {}
     }
+    setScore(localScore);
+    setSubmitting(false);
+    setTestState('results');
   }
 
   function handleTopicComplete() {
@@ -205,35 +213,94 @@ export function FinalTestScreen({
 
                       <div>
                         <p className="text-sm font-extrabold text-slate-500 uppercase tracking-widest mb-4">Your Answer</p>
-                        <div className="grid grid-cols-1 gap-4">
-                          {q.options?.map((opt, i) => {
-                            const isSelected = answers[q.id] === opt;
-                            return (
-                              <button key={i} onClick={() => setAnswers(prev => ({ ...prev, [q.id]: opt }))}
-                                className={`relative text-left p-6 rounded-3xl border-2 transition-all duration-200 group overflow-hidden ${
-                                  isSelected
-                                    ? 'border-indigo-500 bg-indigo-50 shadow-md transform scale-[1.01]'
-                                    : 'border-slate-200 bg-white hover:border-indigo-300 hover:bg-slate-50'
-                                }`}
-                              >
-                                <div className="flex items-center gap-4 relative z-10">
-                                  <span className={`shrink-0 flex items-center justify-center w-12 h-12 rounded-2xl border-2 text-base font-black transition-colors ${
-                                    isSelected
-                                      ? 'border-indigo-500 bg-indigo-500 text-white'
-                                      : 'border-slate-300 text-slate-500 group-hover:border-indigo-300 group-hover:text-indigo-500'
-                                  }`}>{String.fromCharCode(65 + i)}</span>
-                                  <div className={`text-xl font-semibold overflow-x-auto flex-1 ${isSelected ? 'text-indigo-900' : 'text-slate-700'}`}>
-                                    <MathRenderer text={opt} />
-                                  </div>
-                                </div>
-                                {isSelected && (
-                                  <div className="absolute right-6 top-1/2 -translate-y-1/2">
-                                    <CheckCircle2 className="w-8 h-8 text-indigo-500" />
+                        <div className="flex flex-col gap-4">
+                          {q.type === 'image_upload' ? (
+                            <div className="w-full">
+                              <label className="flex flex-col items-center justify-center w-full h-48 sm:h-64 border-2 border-dashed border-indigo-300 rounded-3xl cursor-pointer bg-indigo-50 hover:bg-indigo-100 transition-colors relative overflow-hidden group">
+                                {answers[q.id] ? (
+                                  <>
+                                    <img src={answers[q.id]} alt="Upload preview" className="w-full h-full object-contain p-2" />
+                                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <p className="text-white font-bold flex items-center gap-2"><Upload className="w-4 h-4" /> Replace Image</p>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <div className="flex flex-col items-center justify-center pt-5 pb-6 text-indigo-500">
+                                    <Upload className="w-10 h-10 mb-3 text-indigo-400 group-hover:text-indigo-600 transition-colors" />
+                                    <p className="mb-2 text-sm font-semibold"><span className="font-bold text-indigo-600">Click to upload</span> or drag and drop</p>
+                                    <p className="text-xs">PNG, JPG or GIF (MAX. 5MB)</p>
                                   </div>
                                 )}
-                              </button>
-                            );
-                          })}
+                                <input 
+                                  type="file" 
+                                  className="hidden" 
+                                  accept="image/*"
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    const fd = new FormData();
+                                    fd.append('file', file);
+                                    fd.append('folder', 'student-answers');
+                                    const token = localStorage.getItem('vidhyapika_token');
+                                    try {
+                                      const res = await fetch('/api/upload/image', {
+                                        method: 'POST',
+                                        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+                                        body: fd,
+                                      });
+                                      const json = await res.json();
+                                      if (!res.ok) throw new Error(json.error ?? 'Upload failed');
+                                      setAnswers(prev => ({ ...prev, [q.id]: json.url }));
+                                    } catch {
+                                      // fallback to base64 preview if upload fails
+                                      const reader = new FileReader();
+                                      reader.onloadend = () => setAnswers(prev => ({ ...prev, [q.id]: reader.result as string }));
+                                      reader.readAsDataURL(file);
+                                    }
+                                  }}
+                                />
+                              </label>
+                            </div>
+                          ) : q.type === 'text' ? (
+                            <textarea
+                              rows={6}
+                              placeholder="Type your answer here..."
+                              value={answers[q.id] || ''}
+                              onChange={(e) => setAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
+                              className="w-full p-5 border-2 border-slate-200 rounded-3xl resize-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all outline-none font-medium text-slate-700 placeholder:text-slate-400 text-lg"
+                            />
+                          ) : (
+                            <div className="grid grid-cols-1 gap-4">
+                              {(q.options?.length ? q.options : q.type === 'boolean' ? ['True', 'False'] : []).map((opt, i) => {
+                                const isSelected = answers[q.id] === opt;
+                                return (
+                                  <button key={i} onClick={() => setAnswers(prev => ({ ...prev, [q.id]: opt }))}
+                                    className={`relative text-left p-6 rounded-3xl border-2 transition-all duration-200 group overflow-hidden ${
+                                      isSelected
+                                        ? 'border-indigo-500 bg-indigo-50 shadow-md transform scale-[1.01]'
+                                        : 'border-slate-200 bg-white hover:border-indigo-300 hover:bg-slate-50'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-4 relative z-10">
+                                      <span className={`shrink-0 flex items-center justify-center w-12 h-12 rounded-2xl border-2 text-base font-black transition-colors ${
+                                        isSelected
+                                          ? 'border-indigo-500 bg-indigo-500 text-white'
+                                          : 'border-slate-300 text-slate-500 group-hover:border-indigo-300 group-hover:text-indigo-500'
+                                      }`}>{String.fromCharCode(65 + i)}</span>
+                                      <div className={`text-xl font-semibold overflow-x-auto flex-1 ${isSelected ? 'text-indigo-900' : 'text-slate-700'}`}>
+                                        <MathRenderer text={opt} />
+                                      </div>
+                                    </div>
+                                    {isSelected && (
+                                      <div className="absolute right-6 top-1/2 -translate-y-1/2">
+                                        <CheckCircle2 className="w-8 h-8 text-indigo-500" />
+                                      </div>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </motion.div>
@@ -285,10 +352,14 @@ export function FinalTestScreen({
                 </div>
                 <button
                   onClick={submitTest}
-                  disabled={Object.keys(answers).length < questions.length}
+                  disabled={submitting}
                   className="w-full py-5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 disabled:from-slate-400 disabled:to-slate-500 text-white text-base font-black rounded-2xl shadow-xl transition-all flex items-center justify-center gap-3"
                 >
-                  Submit Final Test <ClipboardCheck className="w-6 h-6" />
+                  {submitting ? (
+                    <><Loader2 className="w-6 h-6 animate-spin" /> AI is evaluating your answers…</>
+                  ) : (
+                    <>Submit Final Test <ClipboardCheck className="w-6 h-6" /></>
+                  )}
                 </button>
               </div>
             </div>

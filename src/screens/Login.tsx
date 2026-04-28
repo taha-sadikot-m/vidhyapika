@@ -108,7 +108,7 @@ export function Login() {
             <ArrowRight className="ml-2 h-4 w-4" />
           </button>
         </form>
-
+        {/*
         <div className="mt-8 bg-blue-50 p-4 rounded-xl border border-blue-100">
           <h3 className="text-sm font-bold text-blue-800 mb-2">Demo Credentials</h3>
           <div className="space-y-2 text-xs text-blue-700 font-medium">
@@ -126,6 +126,7 @@ export function Login() {
             </div>
           </div>
         </div>
+        */}
 
         <div className="mt-12 text-center text-xs font-medium text-slate-400 space-y-2">
           <p>© 2024 Vidhyapika Learning Solutions. All rights reserved.</p>

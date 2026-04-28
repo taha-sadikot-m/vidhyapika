@@ -3,7 +3,7 @@ import { Question } from '../types';
 import { 
   CheckCircle2, XCircle, AlertCircle, HelpCircle, 
   TrendingUp, Upload, Image as ImageIcon,
-  ArrowRight, ArrowLeft, PlayCircle, LayoutGrid, Trash2, Check
+  ArrowRight, ArrowLeft, PlayCircle, LayoutGrid, Trash2, Check, Loader2
 } from 'lucide-react';
 import { MathRenderer } from './MathRenderer';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -13,7 +13,7 @@ interface QuizAttemptRecord { score: number; total: number; date: string; }
 interface InlineQuizProps {
   title: string;
   questions: Question[];
-  onSubmit: (score: number, total: number, answers?: Record<string, string>) => void;
+  onSubmit: (score: number, total: number, answers?: Record<string, string>) => void | Promise<void>;
   initialAnswers?: Record<string, string>;
   isReviewMode?: boolean;
   attemptHistory?: QuizAttemptRecord[];
@@ -25,6 +25,7 @@ export function InlineQuiz({ title, questions, onSubmit, initialAnswers, isRevie
   const [answers, setAnswers] = useState<Record<string, string>>(initialAnswers || {});
   const [uiError, setUiError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   
   // Reset state when questions change
   useEffect(() => {
@@ -81,10 +82,15 @@ export function InlineQuiz({ title, questions, onSubmit, initialAnswers, isRevie
     return score;
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    setSubmitting(true);
     setPhase('review');
     const score = calculateScore();
-    onSubmit(score, questions.length, answers);
+    try {
+      await onSubmit(score, questions.length, answers);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   // ── 1. Start Screen ──
@@ -349,9 +355,17 @@ export function InlineQuiz({ title, questions, onSubmit, initialAnswers, isRevie
                         </motion.div>
                       )}
                     </div>
+                  ) : currentQuestion.type === 'text' ? (
+                    <textarea
+                      rows={6}
+                      placeholder="Type your answer here..."
+                      value={answers[currentQuestion.id] || ''}
+                      onChange={(e) => handleOptionSelect(e.target.value)}
+                      className="w-full p-4 border-2 border-slate-200 rounded-2xl resize-none focus:border-[#0084B4] focus:ring-4 focus:ring-[#0084B4]/10 transition-all outline-none font-medium text-slate-700 placeholder:text-slate-400"
+                    />
                   ) : (
                     <div className="grid grid-cols-1 gap-3">
-                      {currentQuestion.options?.map((option, idx) => {
+                      {(currentQuestion.options?.length ? currentQuestion.options : currentQuestion.type === 'boolean' ? ['True', 'False'] : []).map((option, idx) => {
                         const isSelected = answers[currentQuestion.id] === option;
                         return (
                           <button
@@ -437,9 +451,14 @@ export function InlineQuiz({ title, questions, onSubmit, initialAnswers, isRevie
           </div>
           <button
             onClick={handleSubmit}
-            className="w-full py-4 bg-slate-900 hover:bg-slate-800 text-white text-sm font-black rounded-2xl shadow-md transition-all flex items-center justify-center gap-2"
+            disabled={submitting}
+            className="w-full py-4 bg-slate-900 hover:bg-slate-800 disabled:opacity-70 text-white text-sm font-black rounded-2xl shadow-md transition-all flex items-center justify-center gap-2"
           >
-            Submit Quiz <CheckCircle2 className="w-5 h-5" />
+            {submitting ? (
+              <><Loader2 className="w-5 h-5 animate-spin" /> Evaluating with AI…</>
+            ) : (
+              <>Submit Quiz <CheckCircle2 className="w-5 h-5" /></>
+            )}
           </button>
         </div>
       </div>

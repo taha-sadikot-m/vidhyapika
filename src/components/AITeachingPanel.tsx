@@ -23,7 +23,7 @@ interface AITeachingPanelProps {
   subtopicTitle?: string;
   kind: 'prereq' | 'subtopic' | 'finaltest' | 'prerequisite' | 'final-test';
   contextId?: string;
-  failedQuestions?: { questionId: string; text: string; studentAnswer?: string; correctAnswer?: string }[];
+  failedQuestions?: { questionId: string; text: string; type?: string; studentAnswer?: string; correctAnswer?: string; aiReasoning?: string }[];
   /** Legacy prop: pre-fetched retake questions (bypasses AI generation) */
   retakeQuestions?: Question[];
   passingThreshold?: number;
@@ -255,8 +255,23 @@ export function AITeachingPanel({
                     {failedQuestions.map((q, i) => (
                       <div key={i} className="bg-white border border-amber-100 rounded-xl p-3 text-xs space-y-1">
                         <MathRenderer text={q.text} className="font-semibold text-slate-700" />
-                        {q.studentAnswer && <p className="text-red-600">Your answer: <span className="font-medium">{q.studentAnswer}</span></p>}
-                        {q.correctAnswer && <p className="text-emerald-600">Correct: <span className="font-medium">{q.correctAnswer}</span></p>}
+                        {q.studentAnswer && (
+                          <div className="text-red-600 mt-2">
+                            Your answer: 
+                            {q.type === 'image_upload' && q.studentAnswer.startsWith('data:image') ? (
+                              <img src={q.studentAnswer} alt="Student upload" className="mt-1 max-h-32 rounded border border-red-200" />
+                            ) : (
+                              <span className="font-medium ml-1">{q.studentAnswer}</span>
+                            )}
+                          </div>
+                        )}
+                        {q.correctAnswer && <p className="text-emerald-600 mt-1">Expected: <span className="font-medium">{q.correctAnswer}</span></p>}
+                        {q.aiReasoning && (
+                          <div className="bg-indigo-50/50 p-2 rounded border border-indigo-100 mt-2 text-indigo-700">
+                            <span className="font-bold mr-1">AI Tutor:</span>
+                            <span>{q.aiReasoning}</span>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

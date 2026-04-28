@@ -42,7 +42,7 @@ export type QuizAttemptRecord = {
   studentId: string;
   contextType: "prereq" | "subtopic" | "finaltest";
   contextId: string;
-  answers: { questionId: string; answer: string; correct: boolean }[];
+  answers: { questionId: string; answer: string; correct: boolean; aiReasoning?: string }[];
   score: number;
   total: number;
   passed: boolean;

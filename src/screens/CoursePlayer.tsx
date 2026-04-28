@@ -42,13 +42,13 @@ interface AiConfig {
   topicId?: string;
   subTopicId?: string;
   contextId?: string;
-  failedQuestions?: { questionId: string; text: string; studentAnswer?: string; correctAnswer?: string }[];
+  failedQuestions?: FailedQuestion[];
   retakeQuestions?: Question[];
   onPassed: () => void;
   onBack: () => void;
 }
 
-type FailedQuestion = { questionId: string; text: string; studentAnswer?: string; correctAnswer?: string };
+type FailedQuestion = { questionId: string; text: string; type?: string; studentAnswer?: string; correctAnswer?: string; aiReasoning?: string };
 
 type Phase = 'complete' | 'prereq' | 'subtopic' | 'final-test';
 
@@ -264,23 +264,27 @@ export function CoursePlayer() {
   const [aiTeach, setAiTeach] = useState<AiConfig | null>(null);
   const lastFailedQuestions = useRef<FailedQuestion[]>([]);
 
-  // Fire-and-forget quiz submission to the API
-  function submitQuizToApi(params: {
+  // Await quiz submission to the API — returns API result so we can block the UI on it
+  async function submitQuizToApi(params: {
     contextType: 'prereq' | 'subtopic' | 'finaltest';
     contextId: string;
     topicId: string;
     subTopicId?: string;
     answers: Record<string, string>;
-  }) {
+  }): Promise<{ passed: boolean; percentage: number } | null> {
     const answersArray = Object.entries(params.answers).map(([questionId, answer]) => ({ questionId, answer }));
-    apiFetch<any>('/api/student/quiz/submit', {
-      method: 'POST',
-      body: JSON.stringify({ ...params, answers: answersArray }),
-    }).then(res => {
+    try {
+      const res = await apiFetch<any>('/api/student/quiz/submit', {
+        method: 'POST',
+        body: JSON.stringify({ ...params, answers: answersArray }),
+      });
       if (res.data?.failedQuestions) {
         lastFailedQuestions.current = res.data.failedQuestions;
       }
-    }).catch(() => { });
+      return res.data ? { passed: res.data.passed, percentage: res.data.percentage } : null;
+    } catch {
+      return null;
+    }
   }
 
   // ── Progress ────────────────────────────────────────────────────────────
@@ -667,19 +671,24 @@ export function CoursePlayer() {
             <InlineQuiz
               title={quizTitle}
               questions={step.questions}
-              onSubmit={(score, total, answers) => {
-                const pct = total > 0 ? (score / total) * 100 : 100;
+              onSubmit={async (score, total, answers) => {
+                const localPct = total > 0 ? (score / total) * 100 : 100;
                 const threshold = step.kind === 'quiz' ? (step.sub as any).passingThreshold ?? 60 : 60;
-                setQuizResult({ passed: pct >= threshold });
                 if (answers && step.kind === 'quiz' && topic.id && step.sub.id) {
-                  submitQuizToApi({
+                  // Await API so failedQuestions (with AI reasoning) are ready before result banner shows
+                  const apiResult = await submitQuizToApi({
                     contextType: 'subtopic',
                     contextId: step.sub.id,
                     topicId: topic.id,
                     subTopicId: step.sub.id,
                     answers,
                   });
+                  // Prefer server-side pass/fail (accounts for AI-evaluated answers)
+                  const passed = apiResult ? apiResult.passed : (localPct >= threshold);
+                  setQuizResult({ passed });
                   refetchTopicStatus();
+                } else {
+                  setQuizResult({ passed: localPct >= threshold });
                 }
               }}
             />
