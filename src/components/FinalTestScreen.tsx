@@ -10,6 +10,7 @@ import { AITeachingPanel } from './AITeachingPanel';
 import { MathRenderer } from './MathRenderer';
 import { apiFetch } from '../hooks/useApi';
 import type { Question } from '../types';
+import { compressImagesToBase64 } from '../utils/imageCompress';
 
 interface FinalTestScreenProps {
   topicTitle: string;
@@ -228,14 +229,7 @@ export function FinalTestScreen({
                                   if (!files.length) return;
                                   setUploadingImage(true);
                                   try {
-                                    const token = localStorage.getItem('vidhyapika_token');
-                                    const urls: string[] = [];
-                                    for (const file of files) {
-                                      const fd = new FormData(); fd.append('file', file); fd.append('folder', 'student-answers');
-                                      const res = await fetch('/api/upload/image', { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : undefined, body: fd });
-                                      const json = await res.json();
-                                      if (res.ok) urls.push(json.url); else throw new Error(json.error ?? 'Upload failed');
-                                    }
+                                    const urls = await compressImagesToBase64(files);
                                     setAnswers(prev => {
                                       const existing: string[] = (() => { try { return JSON.parse(prev[q.id] || '[]'); } catch { return prev[q.id] ? [prev[q.id]] : []; } })();
                                       return { ...prev, [q.id]: JSON.stringify([...existing, ...urls]) };
@@ -254,15 +248,7 @@ export function FinalTestScreen({
                                     if (!files.length) return;
                                     setUploadingImage(true);
                                     try {
-                                      const token = localStorage.getItem('vidhyapika_token');
-                                      const urls: string[] = [];
-                                      for (const file of files) {
-                                        const fd = new FormData(); fd.append('file', file); fd.append('folder', 'student-answers');
-                                        const res = await fetch('/api/upload/image', { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : undefined, body: fd });
-                                        const json = await res.json();
-                                        if (res.ok) urls.push(json.url);
-                                        else { const reader = new FileReader(); reader.onloadend = () => urls.push(reader.result as string); reader.readAsDataURL(file); await new Promise(r => setTimeout(r, 100)); }
-                                      }
+                                      const urls = await compressImagesToBase64(files);
                                       setAnswers(prev => {
                                         const existing: string[] = (() => { try { return JSON.parse(prev[q.id] || '[]'); } catch { return prev[q.id] ? [prev[q.id]] : []; } })();
                                         return { ...prev, [q.id]: JSON.stringify([...existing, ...urls]) };

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { MathRenderer } from './MathRenderer';
 import { motion, AnimatePresence } from 'framer-motion';
+import { compressImagesToBase64 } from '../utils/imageCompress';
 
 interface QuizAttemptRecord { score: number; total: number; date: string; }
 
@@ -60,33 +61,19 @@ export function InlineQuiz({ title, questions, onSubmit, initialAnswers, isRevie
 
   const [uploadingImage, setUploadingImage] = useState(false);
 
+  // Client-side compression — no server upload, works on all hosting environments
   const handleImageUpload = async (files: File[]) => {
     if (phase === 'review') return;
     setUiError(null);
     setUploadingImage(true);
     try {
-      const token = localStorage.getItem('vidhyapika_token');
-      const uploadedUrls: string[] = [];
-      for (const file of files) {
-        const fd = new FormData();
-        fd.append('file', file);
-        fd.append('folder', 'student-answers');
-        const res = await fetch('/api/upload/image', {
-          method: 'POST',
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-          body: fd,
-        });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error ?? 'Upload failed');
-        uploadedUrls.push(json.url);
-      }
-      // Append new URLs to existing ones
+      const base64Urls = await compressImagesToBase64(files);
       setAnswers(prev => {
         const existing: string[] = (() => { try { return JSON.parse(prev[currentQuestion.id] || '[]'); } catch { return prev[currentQuestion.id] ? [prev[currentQuestion.id]] : []; } })();
-        return { ...prev, [currentQuestion.id]: JSON.stringify([...existing, ...uploadedUrls]) };
+        return { ...prev, [currentQuestion.id]: JSON.stringify([...existing, ...base64Urls]) };
       });
     } catch (err: any) {
-      setUiError(err.message);
+      setUiError(err.message ?? 'Image processing failed');
     } finally {
       setUploadingImage(false);
     }

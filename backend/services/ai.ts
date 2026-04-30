@@ -189,22 +189,46 @@ export async function evaluateSubjectiveAnswer(params: {
   const { questionText, correctAnswerText, studentAnswer, type } = params;
 
   let parts: any[] = [];
-  
-  if (type === "image_upload" && studentAnswer.startsWith("data:image")) {
-    const match = studentAnswer.match(/^data:(image\/[a-zA-Z+.-]+);base64,(.+)$/);
-    if (match) {
-      const mimeType = match[1];
-      const data = match[2];
-      parts = [
-        { text: `Question: ${questionText}\nExpected criteria/answer: ${correctAnswerText}\n\nEvaluate the provided student work image. Does it correctly solve or answer the question according to the expected criteria? Respond in exact JSON: {"correct": true/false, "reasoning": "short explanation"}` },
-        { inlineData: { mimeType, data } }
-      ];
-    } else {
-      return { correct: false, reasoning: "Invalid image format." };
+
+  if (type === "image_upload") {
+    // Answer may be a JSON array of base64 data URLs (multi-image) or a single data URL
+    let imageUrls: string[] = [];
+    try {
+      const parsed = JSON.parse(studentAnswer);
+      imageUrls = Array.isArray(parsed) ? parsed : [studentAnswer];
+    } catch {
+      imageUrls = [studentAnswer];
     }
+
+    const imageParts: any[] = [];
+    for (const url of imageUrls) {
+      const match = url.match(/^data:(image\/[a-zA-Z+.-]+);base64,(.+)$/);
+      if (match) {
+        imageParts.push({ inlineData: { mimeType: match[1], data: match[2] } });
+      }
+    }
+
+    if (imageParts.length === 0) {
+      return { correct: false, reasoning: "No valid image data provided." };
+    }
+
+    parts = [
+      {
+        text: `Question: ${questionText}\nExpected criteria/answer: ${correctAnswerText}\n\n` +
+          `The student has submitted ${imageParts.length} image(s) of their handwritten/drawn solution. ` +
+          `Evaluate all images together as one complete answer. Does it correctly solve the question? ` +
+          `Respond in exact JSON: {"correct": true/false, "reasoning": "short explanation"}`
+      },
+      ...imageParts,
+    ];
   } else {
     parts = [
-      { text: `Question: ${questionText}\nExpected answer: ${correctAnswerText}\nStudent answer: ${studentAnswer}\n\nEvaluate if the student answer is correct based on the expected answer. Be reasonably lenient with phrasing but strict on the core concept. Respond in exact JSON: {"correct": true/false, "reasoning": "short explanation"}` }
+      {
+        text: `Question: ${questionText}\nExpected answer: ${correctAnswerText}\nStudent answer: ${studentAnswer}\n\n` +
+          `Evaluate if the student answer is correct based on the expected answer. ` +
+          `Be reasonably lenient with phrasing but strict on the core concept. ` +
+          `Respond in exact JSON: {"correct": true/false, "reasoning": "short explanation"}`
+      }
     ];
   }
 
