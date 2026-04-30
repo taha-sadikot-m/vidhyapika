@@ -38,6 +38,7 @@ export function FinalTestScreen({
   const [score, setScore]               = useState(0);
   const [showConfetti, setShowConfetti] = useState(false);
   const [submitting, setSubmitting]     = useState(false);
+  const [showConfirm, setShowConfirm]   = useState(false);
   const apiFailedQuestions              = useRef<{ questionId: string; text: string; type?: string; studentAnswer?: string; correctAnswer?: string; aiReasoning?: string }[]>([]);
 
   const q = questions[currentQ];
@@ -345,25 +346,91 @@ export function FinalTestScreen({
                 </div>
               </div>
 
-              <div className="p-8 bg-slate-50 border-t border-slate-200 shrink-0">
-                <div className="flex items-center gap-3 mb-6 bg-amber-50 p-4 rounded-2xl border border-amber-100">
-                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
-                  <p className="text-xs font-bold text-amber-800">You must score at least 60% to pass.</p>
-                </div>
-                <button
-                  onClick={submitTest}
-                  disabled={submitting}
-                  className="w-full py-5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 disabled:from-slate-400 disabled:to-slate-500 text-white text-base font-black rounded-2xl shadow-xl transition-all flex items-center justify-center gap-3"
-                >
-                  {submitting ? (
-                    <><Loader2 className="w-6 h-6 animate-spin" /> AI is evaluating your answers…</>
-                  ) : (
-                    <>Submit Final Test <ClipboardCheck className="w-6 h-6" /></>
-                  )}
-                </button>
+              <div className="p-8 bg-slate-50 border-t border-slate-200 shrink-0 space-y-3">
+                {currentQ < questions.length - 1 ? (
+                  <button
+                    onClick={() => setCurrentQ(q => q + 1)}
+                    className="w-full py-5 bg-indigo-600 hover:bg-indigo-700 text-white text-base font-black rounded-2xl shadow-xl transition-all flex items-center justify-center gap-3"
+                  >
+                    Next Question <ChevronRight className="w-6 h-6" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setShowConfirm(true)}
+                    disabled={submitting}
+                    className="w-full py-5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 disabled:from-slate-400 disabled:to-slate-500 text-white text-base font-black rounded-2xl shadow-xl transition-all flex items-center justify-center gap-3"
+                  >
+                    {submitting ? (
+                      <><Loader2 className="w-6 h-6 animate-spin" /> AI is evaluating your answers…</>
+                    ) : (
+                      <>Submit Final Test <ClipboardCheck className="w-6 h-6" /></>
+                    )}
+                  </button>
+                )}
+                <p className="text-[11px] text-center font-medium text-slate-400">
+                  {answeredCount} of {questions.length} answered
+                </p>
               </div>
             </div>
           </motion.div>
+        )}
+
+        {/* ── Confirmation Modal ── */}
+        {showConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full"
+            >
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-6 h-6 text-amber-600" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-black text-slate-900">Submit Final Test?</h2>
+                  <p className="text-sm text-slate-500 font-medium">This cannot be undone. Review your progress below.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mb-5">
+                <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
+                  <p className="text-3xl font-black text-green-700">{answeredCount}</p>
+                  <p className="text-xs font-bold text-green-600 uppercase tracking-wider mt-1">Answered</p>
+                </div>
+                <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-center">
+                  <p className="text-3xl font-black text-red-700">{questions.length - answeredCount}</p>
+                  <p className="text-xs font-bold text-red-600 uppercase tracking-wider mt-1">Unanswered</p>
+                </div>
+              </div>
+
+              {questions.length - answeredCount > 0 && (
+                <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-2xl p-3 mb-5">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-xs font-semibold text-amber-800">
+                    {questions.length - answeredCount} unanswered question{questions.length - answeredCount > 1 ? 's' : ''} will be marked incorrect.
+                  </p>
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowConfirm(false)}
+                  className="flex-1 py-3 border-2 border-slate-200 text-slate-700 font-black rounded-2xl hover:bg-slate-50 transition-all text-sm"
+                >
+                  Go Back
+                </button>
+                <button
+                  onClick={() => { setShowConfirm(false); submitTest(); }}
+                  disabled={submitting}
+                  className="flex-1 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-black rounded-2xl transition-all text-sm flex items-center justify-center gap-2 disabled:opacity-70"
+                >
+                  {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
+                  Yes, Submit
+                </button>
+              </div>
+            </motion.div>
+          </div>
         )}
 
         {/* ── 3. Results Screen (Wide Dashboard) ───────────────────────────── */}

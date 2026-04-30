@@ -26,6 +26,7 @@ export function InlineQuiz({ title, questions, onSubmit, initialAnswers, isRevie
   const [uiError, setUiError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   
   // Reset state when questions change
   useEffect(() => {
@@ -444,25 +445,91 @@ export function InlineQuiz({ title, questions, onSubmit, initialAnswers, isRevie
           </div>
         </div>
 
-        <div className="p-6 bg-slate-50 border-t border-slate-200 shrink-0">
-          <div className="flex items-center gap-3 mb-4">
-            <AlertCircle className="w-4 h-4 text-slate-400 shrink-0" />
-            <p className="text-xs font-semibold text-slate-500">You can submit the quiz at any time, even if questions are unanswered.</p>
-          </div>
-          <button
-            onClick={handleSubmit}
-            disabled={submitting}
-            className="w-full py-4 bg-slate-900 hover:bg-slate-800 disabled:opacity-70 text-white text-sm font-black rounded-2xl shadow-md transition-all flex items-center justify-center gap-2"
-          >
-            {submitting ? (
-              <><Loader2 className="w-5 h-5 animate-spin" /> Evaluating with AI…</>
-            ) : (
-              <>Submit Quiz <CheckCircle2 className="w-5 h-5" /></>
-            )}
-          </button>
+        <div className="p-6 bg-slate-50 border-t border-slate-200 shrink-0 space-y-3">
+          {/* Next button on all questions except the last */}
+          {currentQuestionIndex < questions.length - 1 ? (
+            <button
+              onClick={() => setCurrentQuestionIndex(i => i + 1)}
+              className="w-full py-4 bg-[#0084B4] hover:bg-[#006d96] text-white text-sm font-black rounded-2xl shadow-md transition-all flex items-center justify-center gap-2"
+            >
+              Next Question <ArrowRight className="w-5 h-5" />
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowConfirm(true)}
+              disabled={submitting}
+              className="w-full py-4 bg-slate-900 hover:bg-slate-800 disabled:opacity-70 text-white text-sm font-black rounded-2xl shadow-md transition-all flex items-center justify-center gap-2"
+            >
+              {submitting ? (
+                <><Loader2 className="w-5 h-5 animate-spin" /> Evaluating with AI…</>
+              ) : (
+                <>Submit Quiz <CheckCircle2 className="w-5 h-5" /></>
+              )}
+            </button>
+          )}
+          <p className="text-[11px] text-center font-medium text-slate-400">
+            {answeredCount} of {questions.length} answered
+          </p>
         </div>
       </div>
-      
+
+      {/* ── Confirmation Modal ── */}
+      {showConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full"
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center shrink-0">
+                <AlertCircle className="w-6 h-6 text-amber-600" />
+              </div>
+              <div>
+                <h2 className="text-xl font-black text-slate-900">Submit Quiz?</h2>
+                <p className="text-sm text-slate-500 font-medium">Please review your progress before submitting.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 mb-6">
+              <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
+                <p className="text-3xl font-black text-green-700">{answeredCount}</p>
+                <p className="text-xs font-bold text-green-600 uppercase tracking-wider mt-1">Answered</p>
+              </div>
+              <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-center">
+                <p className="text-3xl font-black text-red-700">{questions.length - answeredCount}</p>
+                <p className="text-xs font-bold text-red-600 uppercase tracking-wider mt-1">Unanswered</p>
+              </div>
+            </div>
+
+            {questions.length - answeredCount > 0 && (
+              <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-2xl p-3 mb-5">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-xs font-semibold text-amber-800">
+                  You have {questions.length - answeredCount} unanswered question{questions.length - answeredCount > 1 ? 's' : ''}. Unanswered questions will be marked incorrect.
+                </p>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowConfirm(false)}
+                className="flex-1 py-3 border-2 border-slate-200 text-slate-700 font-black rounded-2xl hover:bg-slate-50 transition-all text-sm"
+              >
+                Go Back
+              </button>
+              <button
+                onClick={() => { setShowConfirm(false); handleSubmit(); }}
+                disabled={submitting}
+                className="flex-1 py-3 bg-slate-900 hover:bg-slate-800 text-white font-black rounded-2xl transition-all text-sm flex items-center justify-center gap-2 disabled:opacity-70"
+              >
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                Yes, Submit
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }
