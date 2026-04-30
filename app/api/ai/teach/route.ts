@@ -1,5 +1,5 @@
 import { verifyJWT, requireAuth } from "../../../../backend/middleware/auth";
-import { generateLessonCards } from "../../../../backend/services/ai";
+import { generateLessonCards, generateMistakePackage } from "../../../../backend/services/ai";
 import {
   createAISession,
   upsertTopicProgress,
@@ -20,6 +20,7 @@ const TeachSchema = z.object({
       text: z.string(),
       studentAnswer: z.string().optional(),
       correctAnswer: z.string().optional(),
+      aiReasoning: z.string().optional(),
     })
   ),
 });
@@ -50,6 +51,13 @@ export async function POST(req: Request) {
       contextType,
     });
 
+    const mistakePackage = await generateMistakePackage({
+      topicName: topic.name,
+      subTopicName: subTopic?.name,
+      failedQuestions,
+      contextType,
+    });
+
     // Create AI session
     const sessionId = await createAISession({
       studentId,
@@ -64,6 +72,8 @@ export async function POST(req: Request) {
         },
       ],
       lessonCards,
+      mistakes: mistakePackage.mistakes,
+      drills: mistakePackage.drills,
       status: "active",
     });
 
@@ -85,7 +95,12 @@ export async function POST(req: Request) {
       });
     }
 
-    return Response.json({ sessionId, lessonCards });
+    return Response.json({
+      sessionId,
+      lessonCards,
+      mistakes: mistakePackage.mistakes,
+      drills: mistakePackage.drills,
+    });
   } catch (e: any) {
     if (e?.name === "ZodError") return Response.json({ error: "Validation error", details: e.issues }, { status: 400 });
     return Response.json({ error: e.message }, { status: 500 });

@@ -58,6 +58,20 @@ export type AISessionRecord = {
   contextType: "prereq" | "subtopic" | "finaltest";
   messages: { role: "tutor" | "student"; content: string; timestamp: number }[];
   lessonCards?: { title: string; content: string }[];
+  mistakes?: {
+    questionId: string;
+    mistakeTitle: string;
+    whatWentWrong: string;
+    likelyMisconception: string;
+    fix: string;
+    example: string;
+  }[];
+  drills?: {
+    prompt: string;
+    hint: string;
+    checkYourself: string;
+    solution: string;
+  }[];
   generatedQuizIds?: string[];
   status: "active" | "completed";
   createdAt?: FirebaseFirestore.Timestamp;

@@ -508,6 +508,17 @@ export function CoursePlayer() {
                           const pct = total > 0 ? (score / total) * 100 : 100;
                           setQuizResult({ passed: pct >= (prereq.passingThreshold ?? 60) });
                           if (answers && topic.id && prereq.id) {
+                            // Local fallback so AI coach has immediate context (API may return later)
+                            lastFailedQuestions.current = (prereq.questions ?? [])
+                              .filter((q) => (answers[q.id] ?? '').trim() !== '' && (answers[q.id] ?? '') !== (q.correctAnswer ?? ''))
+                              .map((q) => ({
+                                questionId: q.id,
+                                text: q.text,
+                                type: q.type,
+                                studentAnswer: answers[q.id] ?? '',
+                                correctAnswer: q.correctAnswer ?? '',
+                                aiReasoning: '',
+                              }));
                             submitQuizToApi({
                               contextType: 'prereq',
                               contextId: prereq.id,
@@ -676,6 +687,17 @@ export function CoursePlayer() {
                 const localPct = total > 0 ? (score / total) * 100 : 100;
                 const threshold = step.kind === 'quiz' ? (step.sub as any).passingThreshold ?? 60 : 60;
                 if (answers && step.kind === 'quiz' && topic.id && step.sub.id) {
+                  // Local fallback first (so coach has something even if API fails)
+                  lastFailedQuestions.current = (step.questions ?? [])
+                    .filter((q) => (answers[q.id] ?? '').trim() !== '' && (answers[q.id] ?? '') !== (q.correctAnswer ?? ''))
+                    .map((q) => ({
+                      questionId: q.id,
+                      text: q.text,
+                      type: q.type,
+                      studentAnswer: answers[q.id] ?? '',
+                      correctAnswer: q.correctAnswer ?? '',
+                      aiReasoning: '',
+                    }));
                   // Await API so failedQuestions (with AI reasoning) are ready before result banner shows
                   const apiResult = await submitQuizToApi({
                     contextType: 'subtopic',

@@ -6,6 +6,24 @@ import { ProgressRing } from '../components/ui/ProgressRing';
 import { motion } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
 import { useApiGet } from '../hooks/useApi';
+import type { Question } from '../types';
+
+// Mirrors the same mapping used in Courses.tsx so both screens send identical topic shapes to CoursePlayer
+function mapApiQuestion(q: any): Question {
+  return {
+    id: q.id,
+    text: q.text ?? '',
+    type: q.type === 'true_false' ? ('boolean' as const)
+      : q.type === 'image_upload' ? ('image_upload' as const)
+        : q.type === 'text' ? ('text' as const)
+          : ('mcq' as const),
+    options: q.options,
+    correctAnswer: q.correctAnswer ?? '',
+    explanation: q.explanation ?? '',
+    difficulty: (['Easy', 'Medium', 'Hard'].includes(q.difficulty) ? q.difficulty : 'Medium') as any,
+    imageUrl: q.imageUrl,
+  };
+}
 
 const EMPTY_CURRICULUM = {
   standard: '',
@@ -50,17 +68,28 @@ export function Dashboard() {
           title: t.name,
           status: prog?.completedAt ? 'completed' : (prog ? 'in-progress' : 'not-started'),
           progress: subTopics.length > 0 ? Math.round((done / subTopics.length) * 100) : 0,
-          prerequisites: t.prerequisite ? [t.prerequisite] : [],
+          // Properly map prerequisite — same shape CoursePlayer expects
+          prerequisites: t.prerequisite ? [{
+            id: t.prerequisite.id,
+            title: t.prerequisite.name ?? 'Prerequisite Check',
+            description: t.prerequisite.description,
+            category: 'Intermediate' as const,
+            passingThreshold: t.prerequisite.passingThreshold ?? 60,
+            questions: (t.prerequisite.questions ?? []).map(mapApiQuestion),
+          }] : [],
+          prerequisiteScores: [],
           subtopicsCompleted: done,
           totalSubtopics: subTopics.length,
-          finalTestQuiz: t.finalTestQuestions ?? [],
+          // Map final test questions through mapApiQuestion
+          finalTestQuiz: (t.finalTestQuestions ?? []).map(mapApiQuestion),
           subTopics: subTopics.map((st: any) => ({
             id: st.id,
             title: st.name,
             status: st.progress?.quizStatus === 'passed' ? 'completed' : (st.progress ? 'in-progress' : 'not-started'),
             videoUrl: st.youtubeUrl,
             videoWatched: st.progress?.videoWatched ?? false,
-            quizzes: st.questions ?? [],
+            quizzes: (st.questions ?? []).map(mapApiQuestion),
+            passingThreshold: st.passingThreshold ?? 60,
           })),
         };
       });

@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Sparkles, Brain, AlertTriangle, Lightbulb, CheckCircle2,
-  RotateCcw, ChevronRight, Send, Loader2
+  RotateCcw, ChevronRight, Send, Loader2, LayoutGrid,
+  BookOpen, ClipboardList, Dumbbell, MessageCircle
 } from 'lucide-react';
 import { InlineQuiz } from './InlineQuiz';
 import { AIBadge } from './ui/AIBadge';
@@ -14,6 +15,22 @@ export type LessonCard = {
   title: string;
   content: string;
   latex?: string;
+};
+
+type MistakeInsight = {
+  questionId: string;
+  mistakeTitle: string;
+  whatWentWrong: string;
+  likelyMisconception: string;
+  fix: string;
+  example: string;
+};
+
+type MiniDrill = {
+  prompt: string;
+  hint: string;
+  checkYourself: string;
+  solution: string;
 };
 
 interface AITeachingPanelProps {
@@ -32,6 +49,7 @@ interface AITeachingPanelProps {
 }
 
 type PanelState = 'loading' | 'teaching' | 'chat' | 'quiz' | 'passed' | 'error';
+type TeachTab = 'mistakes' | 'learn' | 'practice';
 
 export function AITeachingPanel({
   topicId = '',
@@ -49,8 +67,11 @@ export function AITeachingPanel({
   // Normalize kind to new format
   const normalizedKind = (kind === 'prerequisite' ? 'prereq' : kind === 'final-test' ? 'finaltest' : kind) as 'prereq' | 'subtopic' | 'finaltest';
   const [panelState, setPanelState] = useState<PanelState>('loading');
+  const [teachTab, setTeachTab] = useState<TeachTab>('mistakes');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [lessonCards, setLessonCards] = useState<LessonCard[]>([]);
+  const [mistakes, setMistakes] = useState<MistakeInsight[]>([]);
+  const [drills, setDrills] = useState<MiniDrill[]>([]);
   const [retakeQuestions, setRetakeQuestions] = useState<Question[]>([]);
   const [chatMessages, setChatMessages] = useState<{ role: 'tutor' | 'student'; content: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -58,6 +79,9 @@ export function AITeachingPanel({
   const [generatingTest, setGeneratingTest] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const [expandedMistakeId, setExpandedMistakeId] = useState<string | null>(null);
+  const [openHint, setOpenHint] = useState<Record<number, boolean>>({});
+  const [openSolution, setOpenSolution] = useState<Record<number, boolean>>({});
 
   const subjectLine = normalizedKind === 'prereq'
     ? `Let's strengthen the prerequisite: "${topicTitle}"`
@@ -77,6 +101,9 @@ export function AITeachingPanel({
         role: 'tutor',
         content: `Hello! I've prepared some lessons to help you. Go through them and feel free to ask questions!`,
       }]);
+      setMistakes([]);
+      setDrills([]);
+      setTeachTab(failedQuestions.length > 0 ? 'mistakes' : 'learn');
       setPanelState('teaching');
     } else {
       startTeachingSession();
@@ -90,7 +117,7 @@ export function AITeachingPanel({
 
   const startTeachingSession = async () => {
     setPanelState('loading');
-    const res = await apiFetch<{ sessionId: string; lessonCards: LessonCard[] }>('/api/ai/teach', {
+    const res = await apiFetch<{ sessionId: string; lessonCards: LessonCard[]; mistakes?: MistakeInsight[]; drills?: MiniDrill[] }>('/api/ai/teach', {
       method: 'POST',
       body: JSON.stringify({
         topicId,
@@ -108,6 +135,9 @@ export function AITeachingPanel({
 
     setSessionId(res.data.sessionId);
     setLessonCards(res.data.lessonCards);
+    setMistakes(res.data.mistakes ?? []);
+    setDrills(res.data.drills ?? []);
+    setTeachTab((res.data.mistakes?.length ?? 0) > 0 ? 'mistakes' : (res.data.drills?.length ?? 0) > 0 ? 'practice' : 'learn');
     setChatMessages([{
       role: 'tutor',
       content: `Hello! I've prepared some lessons to help you understand the concepts you missed. Go through the lesson cards and feel free to ask me any questions!`,
@@ -226,55 +256,276 @@ export function AITeachingPanel({
           {/* Teaching */}
           {panelState === 'teaching' && (
             <motion.div key="teaching" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="bg-white border border-indigo-100 p-6 space-y-5 rounded-b-3xl shadow-sm">
+              className="bg-white border border-indigo-100 p-6 sm:p-8 space-y-6 rounded-b-3xl shadow-sm">
 
-              {/* AI lesson cards */}
-              {lessonCards.length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {lessonCards.map((card, i) => (
-                    <motion.div key={i} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}
-                      className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-2">
-                      <div className="w-8 h-8 rounded-xl bg-indigo-100 flex items-center justify-center">
-                        <Brain className="w-4 h-4 text-indigo-600" />
+              {/* Overview cards (quiz-grade organization) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center">
+                    <ClipboardList className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-2xl font-black text-slate-900">{failedQuestions.length}</p>
+                    <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest">Missed Questions</p>
+                  </div>
+                </div>
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
+                    <BookOpen className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-2xl font-black text-slate-900">{lessonCards.length}</p>
+                    <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest">Lesson Cards</p>
+                  </div>
+                </div>
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                    <Dumbbell className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-2xl font-black text-slate-900">{drills.length}</p>
+                    <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest">Mini Drills</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section tabs */}
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTeachTab('mistakes')}
+                  className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl border text-sm font-extrabold transition-colors ${
+                    teachTab === 'mistakes'
+                      ? 'bg-indigo-600 border-indigo-600 text-white'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <LayoutGrid className="w-4 h-4" /> Mistakes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTeachTab('learn')}
+                  className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl border text-sm font-extrabold transition-colors ${
+                    teachTab === 'learn'
+                      ? 'bg-indigo-600 border-indigo-600 text-white'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <BookOpen className="w-4 h-4" /> Learn
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTeachTab('practice')}
+                  className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl border text-sm font-extrabold transition-colors ${
+                    teachTab === 'practice'
+                      ? 'bg-indigo-600 border-indigo-600 text-white'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <Dumbbell className="w-4 h-4" /> Practice
+                </button>
+              </div>
+
+              {/* Tab content */}
+              {teachTab === 'mistakes' && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+                    <p className="text-sm font-black text-slate-900">Mistake diagnosis</p>
+                    <p className="text-xs font-bold text-slate-400">({mistakes.length || failedQuestions.length} items)</p>
+                  </div>
+
+                  {(mistakes.length > 0 ? mistakes : failedQuestions.map((q, idx) => ({
+                    questionId: q.questionId ?? `q${idx + 1}`,
+                    mistakeTitle: 'Needs review',
+                    whatWentWrong: q.aiReasoning || 'This answer did not match the expected result.',
+                    likelyMisconception: 'A rule/step may have been applied incorrectly.',
+                    fix: 'Revisit the concept and solve step-by-step, checking each step.',
+                    example: 'Example: If $2(x+3)=14$, then $x=4$.',
+                  }))).map((m, i) => {
+                    const fq = failedQuestions.find((x) => x.questionId === m.questionId);
+                    const expanded = expandedMistakeId === m.questionId;
+                    return (
+                      <div key={`${m.questionId}-${i}`} className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedMistakeId((prev) => prev === m.questionId ? null : m.questionId)}
+                          className="w-full text-left p-5 sm:p-6 hover:bg-slate-50 transition-colors"
+                        >
+                          <div className="flex items-start gap-4">
+                            <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 border border-amber-200">
+                              <span className="font-black text-sm">{i + 1}</span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1">Mistake</p>
+                              <p className="text-base sm:text-lg font-black text-slate-900">{m.mistakeTitle}</p>
+                              {fq?.text && (
+                                <div className="mt-3 text-sm font-semibold text-slate-700 overflow-x-auto">
+                                  <MathRenderer text={fq.text} />
+                                </div>
+                              )}
+                            </div>
+                            <div className="shrink-0">
+                              <ChevronRight className={`w-5 h-5 text-slate-400 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+                            </div>
+                          </div>
+                        </button>
+
+                        {expanded && (
+                          <div className="p-5 sm:p-6 pt-0 space-y-4">
+                            {fq && (
+                              <div className="grid sm:grid-cols-2 gap-3">
+                                <div className="p-4 rounded-2xl border bg-red-50/60 border-red-100">
+                                  <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">Your answer</p>
+                                  {fq.type === 'image_upload' && fq.studentAnswer?.startsWith('data:image') ? (
+                                    <img src={fq.studentAnswer} alt="Student upload" className="max-h-40 rounded-xl border border-red-200 bg-white" />
+                                  ) : (
+                                    <p className="text-sm font-bold text-red-700 break-words">{fq.studentAnswer || '—'}</p>
+                                  )}
+                                  {fq.aiReasoning && (
+                                    <p className="mt-2 text-xs font-medium text-red-700/90">{fq.aiReasoning}</p>
+                                  )}
+                                </div>
+                                <div className="p-4 rounded-2xl border bg-emerald-50/60 border-emerald-100">
+                                  <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">Expected</p>
+                                  <p className="text-sm font-bold text-emerald-700 break-words">{fq.correctAnswer || '—'}</p>
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="grid md:grid-cols-2 gap-3">
+                              <div className="p-4 rounded-2xl border border-slate-200 bg-white">
+                                <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">What went wrong</p>
+                                <MathRenderer text={m.whatWentWrong} className="text-sm font-medium text-slate-700" block />
+                              </div>
+                              <div className="p-4 rounded-2xl border border-slate-200 bg-white">
+                                <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">Likely misconception</p>
+                                <MathRenderer text={m.likelyMisconception} className="text-sm font-medium text-slate-700" block />
+                              </div>
+                              <div className="p-4 rounded-2xl border border-indigo-100 bg-indigo-50/40">
+                                <p className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-widest mb-2">Fix</p>
+                                <MathRenderer text={m.fix} className="text-sm font-medium text-indigo-900/90" block />
+                              </div>
+                              <div className="p-4 rounded-2xl border border-slate-200 bg-white">
+                                <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">Example</p>
+                                <MathRenderer text={m.example} className="text-sm font-medium text-slate-700" block />
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <p className="text-sm font-bold text-slate-800">{card.title}</p>
-                      <MathRenderer text={card.content} className="text-xs text-slate-500 leading-relaxed" block />
-                    </motion.div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
-              {/* Failed questions review */}
-              {failedQuestions.length > 0 && (
-                <div className="border border-amber-200 bg-amber-50 rounded-2xl p-4 space-y-3">
+              {teachTab === 'learn' && (
+                <div className="space-y-4">
                   <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                    <p className="text-sm font-bold text-amber-800">What you missed</p>
+                    <Brain className="w-5 h-5 text-indigo-600 shrink-0" />
+                    <p className="text-sm font-black text-slate-900">Personalized lessons</p>
+                    <p className="text-xs font-bold text-slate-400">({lessonCards.length} cards)</p>
                   </div>
-                  <div className="space-y-2">
-                    {failedQuestions.map((q, i) => (
-                      <div key={i} className="bg-white border border-amber-100 rounded-xl p-3 text-xs space-y-1">
-                        <MathRenderer text={q.text} className="font-semibold text-slate-700" />
-                        {q.studentAnswer && (
-                          <div className="text-red-600 mt-2">
-                            Your answer: 
-                            {q.type === 'image_upload' && q.studentAnswer.startsWith('data:image') ? (
-                              <img src={q.studentAnswer} alt="Student upload" className="mt-1 max-h-32 rounded border border-red-200" />
-                            ) : (
-                              <span className="font-medium ml-1">{q.studentAnswer}</span>
+
+                  {lessonCards.length > 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {lessonCards.map((card, i) => (
+                        <motion.div key={i}
+                          initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: i * 0.06 }}
+                          className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"
+                        >
+                          <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-2xl bg-indigo-100 flex items-center justify-center border border-indigo-200">
+                              <Brain className="w-5 h-5 text-indigo-600" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">Lesson {i + 1}</p>
+                              <p className="text-sm font-black text-slate-900 truncate">{card.title}</p>
+                            </div>
+                          </div>
+                          <div className="p-5">
+                            <MathRenderer text={card.content} className="text-sm text-slate-700 font-medium leading-relaxed" block />
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-2xl p-5">
+                      No lesson cards yet. Try again, or ask in chat.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {teachTab === 'practice' && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Dumbbell className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <p className="text-sm font-black text-slate-900">Mini practice drills</p>
+                    <p className="text-xs font-bold text-slate-400">({drills.length} drills)</p>
+                  </div>
+
+                  {drills.length > 0 ? (
+                    <div className="space-y-3">
+                      {drills.map((d, idx) => (
+                        <div key={idx} className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                          <div className="p-5 sm:p-6 border-b border-slate-100 bg-slate-50/40 flex items-start gap-4">
+                            <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 border border-emerald-200">
+                              <span className="font-black text-sm">{idx + 1}</span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">Drill</p>
+                              <div className="text-sm font-semibold text-slate-800 overflow-x-auto">
+                                <MathRenderer text={d.prompt} block />
+                              </div>
+                            </div>
+                          </div>
+                          <div className="p-5 sm:p-6 space-y-3">
+                            <div className="flex flex-col sm:flex-row gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setOpenHint((prev) => ({ ...prev, [idx]: !prev[idx] }))}
+                                className="flex-1 py-3 rounded-2xl border border-slate-200 text-slate-700 font-extrabold text-sm hover:bg-slate-50 transition-colors"
+                              >
+                                {openHint[idx] ? 'Hide hint' : 'Reveal hint'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setOpenSolution((prev) => ({ ...prev, [idx]: !prev[idx] }))}
+                                className="flex-1 py-3 rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-800 font-extrabold text-sm hover:bg-emerald-100 transition-colors"
+                              >
+                                {openSolution[idx] ? 'Hide solution' : 'Reveal solution'}
+                              </button>
+                            </div>
+
+                            {openHint[idx] && (
+                              <div className="p-4 rounded-2xl border border-blue-100 bg-blue-50/40 flex items-start gap-3">
+                                <Lightbulb className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                                <MathRenderer text={d.hint} className="text-sm font-medium text-blue-900/90" block />
+                              </div>
+                            )}
+
+                            <div className="p-4 rounded-2xl border border-slate-200 bg-white">
+                              <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">Check yourself</p>
+                              <MathRenderer text={d.checkYourself} className="text-sm font-black text-slate-900" block />
+                            </div>
+
+                            {openSolution[idx] && (
+                              <div className="p-4 rounded-2xl border border-emerald-100 bg-emerald-50/40">
+                                <p className="text-[10px] font-extrabold text-emerald-700 uppercase tracking-widest mb-2">Solution</p>
+                                <MathRenderer text={d.solution} className="text-sm font-medium text-emerald-900/90" block />
+                              </div>
                             )}
                           </div>
-                        )}
-                        {q.correctAnswer && <p className="text-emerald-600 mt-1">Expected: <span className="font-medium">{q.correctAnswer}</span></p>}
-                        {q.aiReasoning && (
-                          <div className="bg-indigo-50/50 p-2 rounded border border-indigo-100 mt-2 text-indigo-700">
-                            <span className="font-bold mr-1">AI Tutor:</span>
-                            <span>{q.aiReasoning}</span>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-2xl p-5">
+                      No drills yet. Try reloading the AI session, or ask the tutor in chat.
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -290,7 +541,7 @@ export function AITeachingPanel({
               <div className="flex flex-col sm:flex-row gap-3">
                 <button onClick={() => setPanelState('chat')}
                   className="flex-1 flex items-center justify-center gap-2 py-3 bg-white border border-indigo-300 text-indigo-700 text-sm font-extrabold rounded-2xl hover:bg-indigo-50 transition-colors">
-                  <Sparkles className="w-4 h-4" />
+                  <MessageCircle className="w-4 h-4" />
                   Ask AI Tutor
                 </button>
                 <button onClick={generateRetakeTest} disabled={generatingTest}
@@ -313,7 +564,7 @@ export function AITeachingPanel({
                   <span className="text-sm font-bold text-slate-700">Chat with AI Tutor</span>
                 </div>
                 <button onClick={() => setPanelState('teaching')} className="text-xs font-bold text-slate-500 hover:text-slate-700">
-                  ← Back to Lessons
+                  ← Back to Coach
                 </button>
               </div>
 
@@ -380,7 +631,7 @@ export function AITeachingPanel({
                   <span className="text-sm font-bold text-slate-700">Personalized Retake Quiz</span>
                 </div>
                 <button onClick={() => setPanelState('teaching')} className="text-xs text-slate-500 hover:text-slate-700 underline">
-                  Back to lessons
+                  Back to coach
                 </button>
               </div>
               {retakeQuestions.length > 0 ? (

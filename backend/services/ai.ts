@@ -7,6 +7,13 @@ function getGenAI(): GoogleGenAI {
   return new GoogleGenAI({ apiKey });
 }
 
+function cleanLikelyJson(raw: string): string {
+  return (raw ?? "")
+    .replace(/```json\n?/g, "")
+    .replace(/```\n?/g, "")
+    .trim();
+}
+
 async function generateText(prompt: string): Promise<string> {
   const ai = getGenAI();
   const response = await ai.models.generateContent({
@@ -23,6 +30,124 @@ export type LessonCard = {
   content: string;
   latex?: string;
 };
+
+// ─── Mistake Diagnosis + Mini Drills ──────────────────────────────────────────
+
+export type MistakeInsight = {
+  questionId: string;
+  mistakeTitle: string;
+  whatWentWrong: string;
+  likelyMisconception: string;
+  fix: string;
+  example: string;
+};
+
+export type MiniDrill = {
+  prompt: string;
+  hint: string;
+  checkYourself: string;
+  solution: string;
+};
+
+export type MistakePackage = {
+  mistakes: MistakeInsight[];
+  drills: MiniDrill[];
+};
+
+export async function generateMistakePackage(params: {
+  topicName: string;
+  subTopicName?: string;
+  failedQuestions: { questionId?: string; text: string; studentAnswer?: string; correctAnswer?: string; aiReasoning?: string }[];
+  contextType: "prereq" | "subtopic" | "finaltest";
+}): Promise<MistakePackage> {
+  const { topicName, subTopicName, failedQuestions, contextType } = params;
+  const context = subTopicName ? `${topicName} > ${subTopicName}` : topicName;
+
+  const failedList = failedQuestions
+    .slice(0, 12)
+    .map((q, i) => {
+      const qid = q.questionId ? ` (id: ${q.questionId})` : "";
+      return `${i + 1}. Question${qid}: ${q.text}` +
+        (q.studentAnswer ? `\n   Student answered: ${q.studentAnswer}` : "") +
+        (q.correctAnswer ? `\n   Correct answer: ${q.correctAnswer}` : "") +
+        (q.aiReasoning ? `\n   Prior grading feedback: ${q.aiReasoning}` : "");
+    })
+    .join("\n\n");
+
+  const prompt = `You are an expert math tutor for school students. A student failed a ${contextType} quiz on "${context}".
+
+You will diagnose the student's mistakes and create mini-practice drills to fix them.
+
+Failed questions:
+${failedList}
+
+Rules:
+- Be concise, clear, and step-by-step.
+- Use LaTeX for math where helpful ($...$ inline, $$...$$ block).
+- Return STRICT JSON only. No markdown. No extra keys.
+- Keep text short: each field <= 400 characters.
+- drills: produce 4 to 8 drills total. Each drill must be directly related to the mistakes.
+
+Respond in this exact JSON format:
+{
+  "mistakes": [
+    {
+      "questionId": "string (must match a provided question id when available; else use the question number like \\"q1\\")",
+      "mistakeTitle": "short title",
+      "whatWentWrong": "what the student did wrong",
+      "likelyMisconception": "likely misconception",
+      "fix": "how to fix it / correct approach",
+      "example": "a tiny worked example (may use $...$)"
+    }
+  ],
+  "drills": [
+    {
+      "prompt": "micro practice question",
+      "hint": "one hint",
+      "checkYourself": "final answer only",
+      "solution": "brief worked steps"
+    }
+  ]
+}`;
+
+  try {
+    const raw = await generateText(prompt);
+    const cleaned = cleanLikelyJson(raw);
+    const parsed = JSON.parse(cleaned);
+    const mistakes = Array.isArray(parsed.mistakes) ? parsed.mistakes : [];
+    const drills = Array.isArray(parsed.drills) ? parsed.drills : [];
+    return {
+      mistakes: mistakes as MistakeInsight[],
+      drills: drills as MiniDrill[],
+    };
+  } catch {
+    const fallbackMistakes: MistakeInsight[] = failedQuestions.slice(0, 8).map((q, idx) => ({
+      questionId: q.questionId ?? `q${idx + 1}`,
+      mistakeTitle: "Concept gap detected",
+      whatWentWrong: "This answer did not match the expected method or result.",
+      likelyMisconception: "A step, rule, or definition may be misapplied.",
+      fix: "Review the key rule, then solve slowly step-by-step and re-check the final answer.",
+      example: "Example: If $2(x+3)=14$, then $x+3=7$ so $x=4$.",
+    }));
+
+    const fallbackDrills: MiniDrill[] = [
+      {
+        prompt: `Warm-up: simplify $3(2x-1)$.`,
+        hint: "Distribute 3 into both terms.",
+        checkYourself: "$6x-3$",
+        solution: "Distribute: $3\\cdot 2x=6x$ and $3\\cdot(-1)=-3$ so $6x-3$.",
+      },
+      {
+        prompt: `Quick check: solve $x/5=7$.`,
+        hint: "Multiply both sides by 5.",
+        checkYourself: "$x=35$",
+        solution: "Multiply both sides by 5: $x=7\\cdot 5=35$.",
+      },
+    ];
+
+    return { mistakes: fallbackMistakes, drills: fallbackDrills };
+  }
+}
 
 export async function generateLessonCards(params: {
   topicName: string;
@@ -64,7 +189,7 @@ Respond in this exact JSON format (no markdown, just JSON):
 
   try {
     const raw = await generateText(prompt);
-    const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const cleaned = cleanLikelyJson(raw);
     const parsed = JSON.parse(cleaned);
     return parsed.cards as LessonCard[];
   } catch {
@@ -119,7 +244,7 @@ Respond in this exact JSON format (no markdown, just JSON):
 
   try {
     const raw = await generateText(prompt);
-    const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const cleaned = cleanLikelyJson(raw);
     const parsed = JSON.parse(cleaned);
 
     const questions: Omit<Question, "id" | "createdAt">[] = parsed.questions.map(
@@ -238,7 +363,7 @@ export async function evaluateSubjectiveAnswer(params: {
       contents: parts,
     });
     const raw = response.text ?? "";
-    const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const cleaned = cleanLikelyJson(raw);
     const parsed = JSON.parse(cleaned);
     return { correct: !!parsed.correct, reasoning: parsed.reasoning || "" };
   } catch (e) {

@@ -50,12 +50,16 @@ export function FinalTestScreen({
   const pct = questions.length > 0 ? Math.round((score / questions.length) * 100) : 0;
   const passed = pct >= 60;
 
-  const wrongAnswers = questions.filter(q => answers[q.id] && answers[q.id] !== q.correctAnswer).map(q => ({
-    questionText: q.text,
-    yourAnswer:   answers[q.id] ?? '',
-    correctAnswer: q.correctAnswer,
-    explanation:   q.explanation,
-  }));
+  const wrongAnswers = questions
+    .filter(q => answers[q.id] && answers[q.id] !== q.correctAnswer)
+    .map(q => ({
+      questionId: q.id,
+      questionText: q.text,
+      type: q.type,
+      yourAnswer: answers[q.id] ?? '',
+      correctAnswer: q.correctAnswer,
+      explanation: q.explanation,
+    }));
 
   async function submitTest() {
     setSubmitting(true);
@@ -578,7 +582,17 @@ export function FinalTestScreen({
               kind="finaltest"
               topicId={topicId}
               contextId={topicId}
-              failedQuestions={apiFailedQuestions.current.length > 0 ? apiFailedQuestions.current : undefined}
+              failedQuestions={
+                apiFailedQuestions.current.length > 0
+                  ? apiFailedQuestions.current
+                  : wrongAnswers.map((w) => ({
+                      questionId: w.questionId,
+                      text: w.questionText,
+                      type: w.type,
+                      studentAnswer: w.yourAnswer,
+                      correctAnswer: w.correctAnswer ?? '',
+                    }))
+              }
               retakeQuestions={apiFailedQuestions.current.length === 0 ? questions : undefined}
               onPassed={handleTopicComplete}
               onBack={() => setTestState('results')}
