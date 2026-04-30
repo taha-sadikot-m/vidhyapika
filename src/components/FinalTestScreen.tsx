@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Trophy, Sparkles, CheckCircle2, XCircle, ChevronRight,
   RotateCcw, ClipboardCheck, Brain, AlertTriangle, Star,
-  LayoutGrid, PlayCircle, HelpCircle, Upload, Loader2
+  LayoutGrid, PlayCircle, HelpCircle, Upload, Loader2, Trash2
 } from 'lucide-react';
 import { AIBadge } from './ui/AIBadge';
 import { AITeachingPanel } from './AITeachingPanel';
@@ -39,6 +39,7 @@ export function FinalTestScreen({
   const [showConfetti, setShowConfetti] = useState(false);
   const [submitting, setSubmitting]     = useState(false);
   const [showConfirm, setShowConfirm]   = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const apiFailedQuestions              = useRef<{ questionId: string; text: string; type?: string; studentAnswer?: string; correctAnswer?: string; aiReasoning?: string }[]>([]);
 
   const q = questions[currentQ];
@@ -216,51 +217,98 @@ export function FinalTestScreen({
                         <p className="text-sm font-extrabold text-slate-500 uppercase tracking-widest mb-4">Your Answer</p>
                         <div className="flex flex-col gap-4">
                           {q.type === 'image_upload' ? (
-                            <div className="w-full">
-                              <label className="flex flex-col items-center justify-center w-full h-48 sm:h-64 border-2 border-dashed border-indigo-300 rounded-3xl cursor-pointer bg-indigo-50 hover:bg-indigo-100 transition-colors relative overflow-hidden group">
-                                {answers[q.id] ? (
-                                  <>
-                                    <img src={answers[q.id]} alt="Upload preview" className="w-full h-full object-contain p-2" />
-                                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                      <p className="text-white font-bold flex items-center gap-2"><Upload className="w-4 h-4" /> Replace Image</p>
-                                    </div>
-                                  </>
-                                ) : (
-                                  <div className="flex flex-col items-center justify-center pt-5 pb-6 text-indigo-500">
-                                    <Upload className="w-10 h-10 mb-3 text-indigo-400 group-hover:text-indigo-600 transition-colors" />
-                                    <p className="mb-2 text-sm font-semibold"><span className="font-bold text-indigo-600">Click to upload</span> or drag and drop</p>
-                                    <p className="text-xs">PNG, JPG or GIF (MAX. 5MB)</p>
-                                  </div>
-                                )}
-                                <input 
-                                  type="file" 
-                                  className="hidden" 
-                                  accept="image/*"
-                                  onChange={async (e) => {
-                                    const file = e.target.files?.[0];
-                                    if (!file) return;
-                                    const fd = new FormData();
-                                    fd.append('file', file);
-                                    fd.append('folder', 'student-answers');
+                            <div className="space-y-4">
+                              {/* Drop / Click zone */}
+                              <label
+                                className="flex flex-col items-center justify-center w-full border-2 border-dashed border-indigo-300 rounded-3xl cursor-pointer bg-indigo-50 hover:bg-indigo-100 transition-colors relative overflow-hidden group"
+                                onDragOver={(e) => { e.preventDefault(); }}
+                                onDrop={async (e) => {
+                                  e.preventDefault();
+                                  const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+                                  if (!files.length) return;
+                                  setUploadingImage(true);
+                                  try {
                                     const token = localStorage.getItem('vidhyapika_token');
-                                    try {
-                                      const res = await fetch('/api/upload/image', {
-                                        method: 'POST',
-                                        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-                                        body: fd,
-                                      });
+                                    const urls: string[] = [];
+                                    for (const file of files) {
+                                      const fd = new FormData(); fd.append('file', file); fd.append('folder', 'student-answers');
+                                      const res = await fetch('/api/upload/image', { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : undefined, body: fd });
                                       const json = await res.json();
-                                      if (!res.ok) throw new Error(json.error ?? 'Upload failed');
-                                      setAnswers(prev => ({ ...prev, [q.id]: json.url }));
-                                    } catch {
-                                      // fallback to base64 preview if upload fails
-                                      const reader = new FileReader();
-                                      reader.onloadend = () => setAnswers(prev => ({ ...prev, [q.id]: reader.result as string }));
-                                      reader.readAsDataURL(file);
+                                      if (res.ok) urls.push(json.url); else throw new Error(json.error ?? 'Upload failed');
                                     }
+                                    setAnswers(prev => {
+                                      const existing: string[] = (() => { try { return JSON.parse(prev[q.id] || '[]'); } catch { return prev[q.id] ? [prev[q.id]] : []; } })();
+                                      return { ...prev, [q.id]: JSON.stringify([...existing, ...urls]) };
+                                    });
+                                  } catch { } finally { setUploadingImage(false); }
+                                }}
+                              >
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  accept="image/*"
+                                  multiple
+                                  onChange={async (e) => {
+                                    const files = Array.from(e.target.files || []);
+                                    e.target.value = '';
+                                    if (!files.length) return;
+                                    setUploadingImage(true);
+                                    try {
+                                      const token = localStorage.getItem('vidhyapika_token');
+                                      const urls: string[] = [];
+                                      for (const file of files) {
+                                        const fd = new FormData(); fd.append('file', file); fd.append('folder', 'student-answers');
+                                        const res = await fetch('/api/upload/image', { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : undefined, body: fd });
+                                        const json = await res.json();
+                                        if (res.ok) urls.push(json.url);
+                                        else { const reader = new FileReader(); reader.onloadend = () => urls.push(reader.result as string); reader.readAsDataURL(file); await new Promise(r => setTimeout(r, 100)); }
+                                      }
+                                      setAnswers(prev => {
+                                        const existing: string[] = (() => { try { return JSON.parse(prev[q.id] || '[]'); } catch { return prev[q.id] ? [prev[q.id]] : []; } })();
+                                        return { ...prev, [q.id]: JSON.stringify([...existing, ...urls]) };
+                                      });
+                                    } catch { } finally { setUploadingImage(false); }
                                   }}
                                 />
+                                <div className="flex flex-col items-center justify-center py-10 px-6 text-center">
+                                  {uploadingImage ? (
+                                    <><Loader2 className="w-10 h-10 text-indigo-500 animate-spin mb-3" /><p className="text-sm font-bold text-indigo-700">Uploading…</p></>
+                                  ) : (
+                                    <><Upload className="w-10 h-10 mb-3 text-indigo-400 group-hover:text-indigo-600 transition-colors" /><p className="mb-1 text-sm font-semibold"><span className="font-bold text-indigo-600">Click to upload</span> or drag and drop</p><p className="text-xs text-slate-400">Multiple images supported (PNG, JPG, GIF)</p></>
+                                  )}
+                                </div>
                               </label>
+
+                              {/* Image grid */}
+                              {(() => {
+                                const urls: string[] = (() => { try { return JSON.parse(answers[q.id] || '[]'); } catch { return answers[q.id] ? [answers[q.id]] : []; } })();
+                                if (!urls.length) return null;
+                                return (
+                                  <div className="space-y-2">
+                                    <p className="text-xs font-extrabold text-slate-500 uppercase tracking-widest">{urls.length} image{urls.length > 1 ? 's' : ''} uploaded</p>
+                                    <div className="grid grid-cols-2 gap-3">
+                                      {urls.map((url, idx) => (
+                                        <div key={idx} className="relative bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden group aspect-square">
+                                          <img src={url} alt={`Page ${idx + 1}`} className="w-full h-full object-contain p-1" />
+                                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
+                                            <span className="text-white text-xs font-bold">Page {idx + 1}</span>
+                                            <button type="button"
+                                              onClick={() => setAnswers(prev => {
+                                                const ex: string[] = (() => { try { return JSON.parse(prev[q.id] || '[]'); } catch { return []; } })();
+                                                const next = ex.filter((_, i) => i !== idx);
+                                                return { ...prev, [q.id]: next.length ? JSON.stringify(next) : '' };
+                                              })}
+                                              className="px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-lg flex items-center gap-1 hover:bg-red-700"
+                                            >
+                                              <Trash2 className="w-3 h-3" /> Remove
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
                             </div>
                           ) : q.type === 'text' ? (
                             <textarea

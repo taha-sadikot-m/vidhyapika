@@ -26,30 +26,38 @@ export async function POST(req: Request) {
       return Response.json({ error: "File too large. Maximum size is 10MB." }, { status: 400 });
     }
 
-    const ext = file.name.split(".").pop() ?? "jpg";
-    const folder = formData.get("folder") as string || "uploads";
-    const filename = `${folder}/${randomUUID()}.${ext}`;
-
-    const bucket = getBucket();
-    const fileRef = bucket.file(filename);
-
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    await fileRef.save(buffer, {
-      metadata: {
-        contentType: file.type,
+    // Try Firebase Storage first
+    try {
+      const ext = file.name.split(".").pop() ?? "jpg";
+      const folder = formData.get("folder") as string || "uploads";
+      const filename = `${folder}/${randomUUID()}.${ext}`;
+
+      const bucket = getBucket();
+      const fileRef = bucket.file(filename);
+
+      await fileRef.save(buffer, {
         metadata: {
-          uploadedBy: user!.sub,
-          originalName: file.name,
+          contentType: file.type,
+          metadata: { uploadedBy: user!.sub, originalName: file.name },
         },
-      },
-    });
+      });
 
-    await fileRef.makePublic();
-    const publicUrl = `https://storage.googleapis.com/${bucket.name}/${filename}`;
+      await fileRef.makePublic();
+      const publicUrl = `https://storage.googleapis.com/${bucket.name}/${filename}`;
+      return Response.json({ url: publicUrl, filename });
 
-    return Response.json({ url: publicUrl, filename });
+    } catch (storageErr: any) {
+      // Storage bucket not configured or doesn't exist — fall back to base64 data URL
+      // This allows image_upload quiz questions to work without Storage setup
+      console.warn("[upload] Firebase Storage unavailable, using base64 fallback:", storageErr.message);
+      const base64 = buffer.toString("base64");
+      const dataUrl = `data:${file.type};base64,${base64}`;
+      return Response.json({ url: dataUrl, filename: "base64", fallback: true });
+    }
+
   } catch (e: any) {
     return Response.json({ error: e.message }, { status: 500 });
   }

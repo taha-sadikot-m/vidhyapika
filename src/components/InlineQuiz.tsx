@@ -58,21 +58,46 @@ export function InlineQuiz({ title, questions, onSubmit, initialAnswers, isRevie
     setAnswers(prev => ({ ...prev, [currentQuestion.id]: option }));
   };
 
-  const handleImageUpload = async (file: File) => {
+  const [uploadingImage, setUploadingImage] = useState(false);
+
+  const handleImageUpload = async (files: File[]) => {
     if (phase === 'review') return;
     setUiError(null);
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('folder', 'student-answers');
-    const token = localStorage.getItem('vidhyapika_token');
-    const res = await fetch('/api/upload/image', {
-      method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      body: fd,
+    setUploadingImage(true);
+    try {
+      const token = localStorage.getItem('vidhyapika_token');
+      const uploadedUrls: string[] = [];
+      for (const file of files) {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('folder', 'student-answers');
+        const res = await fetch('/api/upload/image', {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          body: fd,
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? 'Upload failed');
+        uploadedUrls.push(json.url);
+      }
+      // Append new URLs to existing ones
+      setAnswers(prev => {
+        const existing: string[] = (() => { try { return JSON.parse(prev[currentQuestion.id] || '[]'); } catch { return prev[currentQuestion.id] ? [prev[currentQuestion.id]] : []; } })();
+        return { ...prev, [currentQuestion.id]: JSON.stringify([...existing, ...uploadedUrls]) };
+      });
+    } catch (err: any) {
+      setUiError(err.message);
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const removeUploadedImage = (questionId: string, idx: number) => {
+    setAnswers(prev => {
+      const existing: string[] = (() => { try { return JSON.parse(prev[questionId] || '[]'); } catch { return []; } })();
+      const next = existing.filter((_, i) => i !== idx);
+      return { ...prev, [questionId]: next.length ? JSON.stringify(next) : '' };
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error ?? 'Upload failed');
-    setAnswers(prev => ({ ...prev, [currentQuestion.id]: json.url }));
   };
 
   const calculateScore = () => {
@@ -305,56 +330,81 @@ export function InlineQuiz({ title, questions, onSubmit, initialAnswers, isRevie
                   
                   {currentQuestion.type === 'image_upload' ? (
                     <div className="space-y-4">
-                      <label 
-                        className={`block relative overflow-hidden transition-all duration-300 rounded-3xl border-2 border-dashed bg-white 
+                      {/* Drop / Click Zone */}
+                      <label
+                        className={`block relative overflow-hidden transition-all duration-300 rounded-3xl border-2 border-dashed bg-white cursor-pointer
                           ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-slate-300 hover:border-blue-400 hover:bg-slate-50'}`}
                         onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                         onDragLeave={() => setIsDragging(false)}
                         onDrop={async (e) => {
                           e.preventDefault();
                           setIsDragging(false);
-                          const file = e.dataTransfer.files?.[0];
-                          if (file && file.type.startsWith('image/')) {
-                            try { await handleImageUpload(file); } catch (err: any) { setUiError(err.message); }
-                          } else {
-                            setUiError("Please upload a valid image file.");
-                          }
+                          const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+                          if (files.length) { await handleImageUpload(files); }
+                          else { setUiError('Please drop valid image files.'); }
                         }}
                       >
                         <input
                           type="file"
                           accept="image/*"
+                          multiple
                           className="hidden"
                           onChange={async (e) => {
-                            const file = e.target.files?.[0];
+                            const files = Array.from(e.target.files || []);
                             e.target.value = '';
-                            if (!file) return;
-                            try { await handleImageUpload(file); } catch (err: any) { setUiError(err.message); }
+                            if (files.length) await handleImageUpload(files);
                           }}
                         />
-                        <div className="flex flex-col items-center justify-center py-16 px-6 text-center cursor-pointer">
-                          <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mb-4">
-                            <Upload className="w-8 h-8" />
-                          </div>
-                          <p className="text-lg font-bold text-slate-800">Click to upload or drag & drop</p>
-                          <p className="text-sm font-medium text-slate-500 mt-2">Upload a clear photo of your handwritten solution.</p>
+                        <div className="flex flex-col items-center justify-center py-12 px-6 text-center">
+                          {uploadingImage ? (
+                            <>
+                              <Loader2 className="w-10 h-10 text-blue-500 animate-spin mb-3" />
+                              <p className="text-base font-bold text-slate-700">Uploading…</p>
+                            </>
+                          ) : (
+                            <>
+                              <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mb-4">
+                                <Upload className="w-8 h-8" />
+                              </div>
+                              <p className="text-lg font-bold text-slate-800">Click or drag & drop images</p>
+                              <p className="text-sm font-medium text-slate-500 mt-1">You can upload multiple pages / photos</p>
+                            </>
+                          )}
                         </div>
                       </label>
 
-                      {answers[currentQuestion.id] && (
-                        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="relative bg-white p-2 rounded-3xl border border-slate-200 shadow-sm group">
-                          <img src={answers[currentQuestion.id]} alt="Uploaded answer" className="w-full object-contain rounded-2xl max-h-[400px]" />
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl flex items-center justify-center">
-                            <button
-                              type="button"
-                              onClick={() => setAnswers(prev => { const n = { ...prev }; delete n[currentQuestion.id]; return n; })}
-                              className="px-6 py-3 bg-red-600 text-white font-bold rounded-xl shadow-lg flex items-center gap-2 hover:bg-red-700 transition-colors"
-                            >
-                              <Trash2 className="w-5 h-5" /> Remove Image
-                            </button>
+                      {/* Uploaded Images Grid */}
+                      {(() => {
+                        const urls: string[] = (() => { try { return JSON.parse(answers[currentQuestion.id] || '[]'); } catch { return answers[currentQuestion.id] ? [answers[currentQuestion.id]] : []; } })();
+                        if (!urls.length) return null;
+                        return (
+                          <div className="space-y-3">
+                            <p className="text-xs font-extrabold text-slate-500 uppercase tracking-widest">{urls.length} image{urls.length > 1 ? 's' : ''} uploaded</p>
+                            <div className="grid grid-cols-2 gap-3">
+                              {urls.map((url, idx) => (
+                                <motion.div
+                                  key={idx}
+                                  initial={{ opacity: 0, scale: 0.95 }}
+                                  animate={{ opacity: 1, scale: 1 }}
+                                  className="relative bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden group aspect-square"
+                                >
+                                  <img src={url} alt={`Page ${idx + 1}`} className="w-full h-full object-contain p-1" />
+                                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
+                                    <span className="text-white text-xs font-bold">Page {idx + 1}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => removeUploadedImage(currentQuestion.id, idx)}
+                                      className="px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-lg flex items-center gap-1 hover:bg-red-700 transition-colors"
+                                    >
+                                      <Trash2 className="w-3 h-3" /> Remove
+                                    </button>
+                                  </div>
+                                </motion.div>
+                              ))}
+                            </div>
                           </div>
-                        </motion.div>
-                      )}
+                        );
+                      })()}
                     </div>
                   ) : currentQuestion.type === 'text' ? (
                     <textarea
