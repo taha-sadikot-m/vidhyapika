@@ -586,26 +586,60 @@ export function AdminCurriculum() {
 
   // ── Import handlers ─────────────────────────────────────────────────────────
 
-  const handleImportTopics = async (items: any[]) => {
-    for (const item of items) {
-      await apiFetch(`/api/admin/classes/${selection.classId}/topics`, { method: 'POST', body: JSON.stringify({ name: item.title ?? item.topic_title, order: Number(item.sequence ?? item.topic_sequence ?? 0), finalTestThreshold: 60 }) });
-    }
+  const handleImportTopics = async ({ items }: { items: any[]; rows: Record<string, string>[] }) => {
+    const payloadItems = items.map((it: any) => ({
+      name: it.title ?? it.topic_title ?? '',
+      order: Number(it.sequence ?? it.topic_sequence ?? 0),
+      finalTestThreshold: 60,
+    }));
+    const { data, error } = await apiFetch<{ created: { index: number; id: string }[]; errors: { index: number; message: string; field?: string }[] }>(
+      `/api/admin/classes/${selection.classId}/topics/bulk`,
+      { method: 'POST', body: JSON.stringify({ items: payloadItems }) }
+    );
+    if (error) throw new Error(error);
     await loadTopics(selection.classId);
+    return { created: data?.created ?? [], errors: data?.errors ?? [] };
   };
 
-  const handleImportSubtopics = async (items: any[]) => {
-    for (const item of items) {
-      await apiFetch(`/api/admin/topics/${selection.topicId}/subtopics`, { method: 'POST', body: JSON.stringify({ name: item.title ?? item.subtopic_title, order: currentSubTopics.length, youtubeUrl: item.videoUrl ?? item.subtopic_video ?? '', passingThreshold: 60 }) });
-    }
+  const handleImportSubtopics = async ({ items }: { items: any[]; rows: Record<string, string>[] }) => {
+    const payloadItems = items.map((it: any, i: number) => ({
+      name: it.title ?? it.subtopic_title ?? '',
+      order: currentSubTopics.length + i,
+      youtubeUrl: it.videoUrl ?? it.subtopic_video ?? '',
+      passingThreshold: Number(it.passingThreshold ?? 60),
+    }));
+    const { data, error } = await apiFetch<{ created: { index: number; id: string }[]; errors: { index: number; message: string; field?: string }[] }>(
+      `/api/admin/topics/${selection.topicId}/subtopics/bulk`,
+      { method: 'POST', body: JSON.stringify({ items: payloadItems }) }
+    );
+    if (error) throw new Error(error);
     await loadSubTopics(selection.topicId);
+    return { created: data?.created ?? [], errors: data?.errors ?? [] };
   };
 
-  const makeImportQuestions = (contextType: string, contextId: string) => async (items: any[]) => {
-    for (const item of items) {
-      const qType = item.type === 'boolean' ? 'true_false' : (item.type ?? 'mcq');
-      await apiFetch('/api/admin/questions', { method: 'POST', body: JSON.stringify({ contextType, contextId, text: item.text ?? item.question_text ?? '', type: qType, options: item.options ?? null, correctAnswer: item.correctAnswer ?? item.correct_answer ?? null, imageUrl: null, difficulty: item.difficulty ?? 'Medium', explanation: item.explanation ?? '', order: 0 }) });
-    }
+  const makeImportQuestions = (contextType: string, contextId: string) => async ({ items }: { items: any[]; rows: Record<string, string>[] }) => {
+    const payloadItems = items.map((it: any, i: number) => {
+      const raw = it.type ?? it.question_type ?? 'mcq';
+      const qType = raw === 'boolean' ? 'true_false' : raw;
+      return {
+        text: it.text ?? it.question_text ?? '',
+        type: qType,
+        options: it.options ?? null,
+        correctAnswer: it.correctAnswer ?? it.correct_answer ?? null,
+        imageUrl: it.imageUrl ?? it.image_url ?? null,
+        difficulty: it.difficulty ?? 'Medium',
+        explanation: it.explanation ?? '',
+        order: Number(it.order ?? i),
+      };
+    });
+
+    const { data, error } = await apiFetch<{ created: { index: number; id: string }[]; errors: { index: number; message: string; field?: string }[] }>(
+      `/api/admin/questions/bulk`,
+      { method: 'POST', body: JSON.stringify({ contextType, contextId, items: payloadItems }) }
+    );
+    if (error) throw new Error(error);
     await loadQuestions(contextType, contextId);
+    return { created: data?.created ?? [], errors: data?.errors ?? [] };
   };
 
   // ── Breadcrumbs ───────────────────────────────────────────────────────────────
@@ -991,7 +1025,8 @@ export function AdminCurriculum() {
   // ── Subtopics split layout ─────────────────────────────────────────────────────
 
   const renderSubtopics = () => (
-    <div className="flex flex-col md:flex-row gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500 min-h-[600px]">
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex flex-col md:flex-row gap-6 min-h-[600px]">
       {/* ── Left sidebar ── */}
       <div className="w-full md:w-1/3 lg:w-72 flex flex-col gap-3 border-r border-slate-200 pr-5 shrink-0">
         <h2 className="text-lg font-extrabold text-slate-900">{currentTopic?.name}</h2>
@@ -1045,7 +1080,6 @@ export function AdminCurriculum() {
           <button onClick={() => openModal('add-subtopic')} className="w-full py-2.5 bg-slate-100 text-slate-700 rounded-xl text-sm font-bold hover:bg-slate-200 transition-colors flex items-center justify-center gap-2 mt-1">
               <Plus className="w-4 h-4" /> Add Sub-topic
             </button>
-          <LevelImportPanel target="subtopics" accent="blue" contextLabel={currentTopic?.name} onImport={handleImportSubtopics} />
           </div>
         </div>
 
@@ -1060,8 +1094,14 @@ export function AdminCurriculum() {
               <FileText className="w-16 h-16 text-slate-300 mb-4" />
               <h3 className="text-xl font-bold text-slate-900 mb-2">Select a Section</h3>
               <p className="text-slate-500 max-w-md">Choose a prerequisite, final test, or sub-topic from the sidebar.</p>
-      </div>
+            </div>
           )}
+      </div>
+      </div>
+
+      {/* Bulk CSV import: full content width (not constrained to the topic sidebar) */}
+      <div className="w-full min-w-0 border-t border-slate-200 pt-8">
+        <LevelImportPanel target="subtopics" accent="blue" contextLabel={currentTopic?.name} onImport={handleImportSubtopics} />
       </div>
     </div>
   );

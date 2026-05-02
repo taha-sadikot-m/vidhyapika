@@ -24,6 +24,24 @@ export async function getStandard(id: string): Promise<Standard | null> {
   return { id: doc.id, ...doc.data() } as Standard;
 }
 
+/** Batch fetch standards by id (deduped). */
+export async function getStandardsByIds(ids: string[]): Promise<Map<string, Standard>> {
+  const uniq = [...new Set(ids.filter(Boolean))];
+  const map = new Map<string, Standard>();
+  if (uniq.length === 0) return map;
+  const db = getDb();
+  const chunkSize = 10;
+  for (let i = 0; i < uniq.length; i += chunkSize) {
+    const chunk = uniq.slice(i, i + chunkSize);
+    const refs = chunk.map((id) => db.collection("standards").doc(id));
+    const snaps = await db.getAll(...refs);
+    for (const snap of snaps) {
+      if (snap.exists) map.set(snap.id, { id: snap.id, ...snap.data() } as Standard);
+    }
+  }
+  return map;
+}
+
 export async function createStandard(data: Omit<Standard, "id" | "createdAt">): Promise<string> {
   const ref = await getDb()
     .collection("standards")
@@ -64,6 +82,24 @@ export async function getClass(id: string): Promise<Class | null> {
   const doc = await getDb().collection("classes").doc(id).get();
   if (!doc.exists) return null;
   return { id: doc.id, ...doc.data() } as Class;
+}
+
+/** Batch fetch classes by id (deduped). */
+export async function getClassesByIds(ids: string[]): Promise<Map<string, Class>> {
+  const uniq = [...new Set(ids.filter(Boolean))];
+  const map = new Map<string, Class>();
+  if (uniq.length === 0) return map;
+  const db = getDb();
+  const chunkSize = 10;
+  for (let i = 0; i < uniq.length; i += chunkSize) {
+    const chunk = uniq.slice(i, i + chunkSize);
+    const refs = chunk.map((id) => db.collection("classes").doc(id));
+    const snaps = await db.getAll(...refs);
+    for (const snap of snaps) {
+      if (snap.exists) map.set(snap.id, { id: snap.id, ...snap.data() } as Class);
+    }
+  }
+  return map;
 }
 
 export async function createClass(data: Omit<Class, "id" | "createdAt">): Promise<string> {
@@ -117,6 +153,24 @@ export async function getTopic(id: string): Promise<Topic | null> {
   return { id: doc.id, ...doc.data() } as Topic;
 }
 
+/** Batch fetch topics by id (deduped). */
+export async function getTopicsByIds(ids: string[]): Promise<Map<string, Topic>> {
+  const uniq = [...new Set(ids.filter(Boolean))];
+  const map = new Map<string, Topic>();
+  if (uniq.length === 0) return map;
+  const db = getDb();
+  const chunkSize = 10;
+  for (let i = 0; i < uniq.length; i += chunkSize) {
+    const chunk = uniq.slice(i, i + chunkSize);
+    const refs = chunk.map((id) => db.collection("topics").doc(id));
+    const snaps = await db.getAll(...refs);
+    for (const snap of snaps) {
+      if (snap.exists) map.set(snap.id, { id: snap.id, ...snap.data() } as Topic);
+    }
+  }
+  return map;
+}
+
 export async function createTopic(data: Omit<Topic, "id" | "createdAt">): Promise<string> {
   const ref = await getDb()
     .collection("topics")
@@ -161,6 +215,24 @@ export async function getSubTopic(id: string): Promise<SubTopic | null> {
   const doc = await getDb().collection("subTopics").doc(id).get();
   if (!doc.exists) return null;
   return { id: doc.id, ...doc.data() } as SubTopic;
+}
+
+/** Batch fetch sub-topics by id (deduped). */
+export async function getSubTopicsByIds(ids: string[]): Promise<Map<string, SubTopic>> {
+  const uniq = [...new Set(ids.filter(Boolean))];
+  const map = new Map<string, SubTopic>();
+  if (uniq.length === 0) return map;
+  const db = getDb();
+  const chunkSize = 10;
+  for (let i = 0; i < uniq.length; i += chunkSize) {
+    const chunk = uniq.slice(i, i + chunkSize);
+    const refs = chunk.map((id) => db.collection("subTopics").doc(id));
+    const snaps = await db.getAll(...refs);
+    for (const snap of snaps) {
+      if (snap.exists) map.set(snap.id, { id: snap.id, ...snap.data() } as SubTopic);
+    }
+  }
+  return map;
 }
 
 export async function createSubTopic(data: Omit<SubTopic, "id" | "createdAt">): Promise<string> {

@@ -12,7 +12,8 @@ import {
   Menu,
   X,
   Search,
-  ShieldAlert
+  ShieldAlert,
+  BarChart3,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -22,6 +23,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 
   const navigation = [
     { name: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
+    { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
     { name: 'Math Curriculum', href: '/admin/curriculum', icon: Calculator },
     { name: 'Students', href: '/admin/students', icon: Users },
     { name: 'Assignments', href: '/admin/assignments', icon: ClipboardList },

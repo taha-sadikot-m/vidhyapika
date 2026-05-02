@@ -14,10 +14,79 @@ function cleanLikelyJson(raw: string): string {
     .trim();
 }
 
+/** If the model marked correct=true but the reasoning clearly says the work is wrong or irrelevant, force incorrect. */
+function shouldDowngradeImageMarkToIncorrect(reasoning: string): boolean {
+  const r = (reasoning ?? "").toLowerCase().trim();
+  if (r.length < 15) return true;
+  const phrases = [
+    "unrelated to the question",
+    "not related to the question",
+    "does not address the question",
+    "doesn't address the question",
+    "does not answer the question",
+    "doesn't answer the question",
+    "random image",
+    "random diagram",
+    "unrelated diagram",
+    "irrelevant image",
+    "does not show",
+    "doesn't show",
+    "cannot verify",
+    "can't verify",
+    "unable to verify",
+    "cannot determine",
+    "no valid solution",
+    "not a valid",
+    "not the correct",
+    "incorrect solution",
+    "wrong solution",
+    "contradicts",
+    "does not match",
+    "doesn't match",
+    "meme",
+    "decorative",
+    "no meaningful attempt",
+  ];
+  return phrases.some((p) => r.includes(p));
+}
+
+function buildImageEvaluationPrompt(
+  questionText: string,
+  correctAnswerText: string,
+  imageCount: number
+): string {
+  const rubric =
+    correctAnswerText?.trim() ||
+    "(No separate rubric text — infer the required result only from the question.)";
+
+  return `You are a STRICT independent examiner grading a written exam. You must reduce false positives: do NOT mark answers correct unless you would defend that decision to another teacher.
+
+QUESTION (read carefully):
+${questionText}
+
+EXPECTED CRITERIA / MODEL ANSWER / RUBRIC:
+${rubric}
+
+INPUT: The student submitted ${imageCount} image(s). Treat all images as one submission.
+
+GRADING RULES (follow in order):
+1) Mark "correct": true ONLY if the visible work in the image(s) fully addresses THIS question and matches the expected criteria (correct ideas, correct final result when applicable, and sufficient reasoning/steps for the question type).
+2) Mark "correct": false if ANY of these apply:
+   - The image(s) look unrelated to the question (random diagrams, unrelated sketches, decorative figures, memes, charts about a different topic, empty/near-empty submission).
+   - The work is too ambiguous, illegible, or cropped so you cannot verify that the solution is right.
+   - The conclusion or key steps clearly disagree with the expected criteria/rubric when that rubric is specific (numbers, definitions, classification, etc.).
+   - Only part of the solution is right, or the student guessed without adequate justification visible.
+   - You are not fully confident the submission demonstrates mastery — in doubt, choose false.
+3) Do not give credit for effort alone. Being "close" or "on the right track" still yields false unless the question explicitly allows partial credit (most quizzes here do not).
+
+OUTPUT (JSON only, no markdown):
+{"correct": boolean, "reasoning": "2-4 sentences: what you see in the image, how it compares to the rubric, and why true/false."}`;
+}
+
 async function generateText(prompt: string): Promise<string> {
   const ai = getGenAI();
   const response = await ai.models.generateContent({
-    model: "gemini-2.0-flash",
+    model: "gemini-2.5-flash",
     contents: prompt,
   });
   return response.text ?? "";
@@ -309,8 +378,7 @@ export async function evaluateSubjectiveAnswer(params: {
   correctAnswerText: string;
   studentAnswer: string;
   type: "text" | "image_upload";
-}): Promise<{ correct: boolean; reasoning: string }> {
-  const ai = getGenAI();
+}): Promise<{ correct: boolean; reasoning: string; evaluationFailed?: boolean }> {
   const { questionText, correctAnswerText, studentAnswer, type } = params;
 
   let parts: any[] = [];
@@ -339,10 +407,7 @@ export async function evaluateSubjectiveAnswer(params: {
 
     parts = [
       {
-        text: `Question: ${questionText}\nExpected criteria/answer: ${correctAnswerText}\n\n` +
-          `The student has submitted ${imageParts.length} image(s) of their handwritten/drawn solution. ` +
-          `Evaluate all images together as one complete answer. Does it correctly solve the question? ` +
-          `Respond in exact JSON: {"correct": true/false, "reasoning": "short explanation"}`
+        text: buildImageEvaluationPrompt(questionText, correctAnswerText, imageParts.length),
       },
       ...imageParts,
     ];
@@ -358,16 +423,42 @@ export async function evaluateSubjectiveAnswer(params: {
   }
 
   try {
+    const ai = getGenAI();
+    const isImage = type === "image_upload";
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-2.5-flash",
       contents: parts,
+      config: isImage
+        ? {
+            temperature: 0.15,
+            topP: 0.75,
+            responseMimeType: "application/json",
+          }
+        : {
+            temperature: 0.35,
+            responseMimeType: "application/json",
+          },
     });
     const raw = response.text ?? "";
     const cleaned = cleanLikelyJson(raw);
-    const parsed = JSON.parse(cleaned);
-    return { correct: !!parsed.correct, reasoning: parsed.reasoning || "" };
+    const parsed = JSON.parse(cleaned) as { correct?: boolean; reasoning?: string };
+    let correct = !!parsed.correct;
+    let reasoning = String(parsed.reasoning ?? "").trim();
+
+    if (isImage && correct && shouldDowngradeImageMarkToIncorrect(reasoning)) {
+      correct = false;
+      reasoning =
+        (reasoning ? `${reasoning} ` : "") +
+        "Marked incorrect automatically because the explanation did not support a correct score (e.g. unrelated or unverifiable work).";
+    }
+
+    return { correct, reasoning: reasoning || (correct ? "Meets the rubric." : "Does not meet the rubric.") };
   } catch (e) {
     console.error("AI Evaluation error:", e);
-    return { correct: false, reasoning: "Failed to evaluate answer." };
+    return {
+      correct: false,
+      reasoning: "We couldn’t grade this answer automatically. Tap “Retry evaluation” to try again.",
+      evaluationFailed: true,
+    };
   }
 }

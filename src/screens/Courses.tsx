@@ -10,28 +10,15 @@ import {
   ChevronRight,
   Lock,
   Network,
-  TrendingUp,
   ChevronDown,
   Sparkles,
   ShieldCheck,
   ListChecks,
   Flag,
 } from 'lucide-react';
-import type { Question, StudentTopicProgress } from '../types';
+import type { StudentTopicProgress } from '../types';
 import { useApiGet } from '../hooks/useApi';
-
-function mapApiQuestion(q: any): Question {
-  return {
-    id: q.id,
-    text: q.text ?? '',
-    type: q.type === 'true_false' ? 'boolean' as const : q.type === 'image_upload' ? 'image_upload' as const : q.type === 'text' ? 'text' as const : 'mcq' as const,
-    options: q.options,
-    correctAnswer: q.correctAnswer ?? '',
-    explanation: q.explanation ?? '',
-    difficulty: (['Easy', 'Medium', 'Hard'].includes(q.difficulty) ? q.difficulty : 'Medium') as 'Easy' | 'Medium' | 'Hard',
-    imageUrl: q.imageUrl,
-  };
-}
+import { mapRawTopicToStudentTopic } from '../utils/studentCurriculumMap';
 
 type NextAction = {
   label: 'Locked' | 'Start' | 'Continue' | 'Review';
@@ -92,100 +79,122 @@ function RoadmapTopicItem({
     + (topic.postEvaluationQuiz?.length ?? 0)
     + (topic.finalTestQuiz?.length ?? 0);
 
-  // Styling logic based on state
-  const cardBorder = locked
-    ? 'border-slate-200 bg-slate-50 opacity-80'
+  const cardShell = locked
+    ? 'border-slate-200/90 bg-slate-50/80 opacity-90'
     : isCompleted
-      ? 'border-emerald-200 bg-white shadow-sm hover:shadow-md'
+      ? 'border-emerald-200/70 bg-white'
       : isInProgress
-        ? 'border-blue-300 bg-white shadow-md ring-4 ring-blue-50'
-        : 'border-slate-200 bg-white shadow-sm hover:shadow-md';
+        ? 'border-[#0084B4]/25 bg-white shadow-[0_4px_24px_rgba(0,132,180,0.08)]'
+        : 'border-slate-200/80 bg-white';
+
+  const accentBar =
+    locked ? 'bg-slate-200' : isCompleted ? 'bg-emerald-500' : isInProgress ? 'bg-[#0084B4]' : 'bg-slate-300';
 
   const iconBg = locked
-    ? 'bg-slate-100 text-slate-400'
+    ? 'bg-slate-200/80 text-slate-500'
     : isCompleted
-      ? 'bg-emerald-100 text-emerald-600'
+      ? 'bg-emerald-500 text-white'
       : isInProgress
-        ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-inner'
-        : 'bg-slate-100 text-slate-600';
+        ? 'bg-[#0084B4] text-white'
+        : 'bg-slate-100 text-slate-700';
 
-  const timelineColor = locked
-    ? 'bg-slate-200'
-    : isCompleted
-      ? 'bg-emerald-400'
-      : 'bg-blue-200';
-
-  const dotColor = locked
-    ? 'bg-slate-200 ring-white'
-    : isCompleted
-      ? 'bg-emerald-500 ring-emerald-50'
-      : isInProgress
-        ? 'bg-blue-500 ring-blue-100 animate-pulse'
-        : 'bg-slate-300 ring-white';
+  const timelineColor = locked ? 'bg-slate-200/90' : isCompleted ? 'bg-emerald-300/80' : 'bg-sky-200/90';
 
   return (
     <div className="relative group">
-      {/* Timeline Line */}
-      <div className={`absolute left-8 top-14 bottom-[-2rem] w-1 rounded-full z-0 transition-colors duration-500 ${timelineColor}`} />
+      <div
+        className={`absolute left-[1.875rem] top-[4.25rem] bottom-[-1.5rem] w-px rounded-full z-0 ${timelineColor}`}
+        aria-hidden
+      />
 
-      <div className="relative z-10 flex gap-6 items-start">
-        {/* Timeline Node */}
-        <div className="shrink-0 mt-5 flex flex-col items-center">
-          <div className={`w-16 h-16 rounded-2xl flex items-center justify-center font-black text-xl shadow-sm z-10 transition-all duration-300 ${iconBg}`}>
-            {locked ? <Lock className="w-6 h-6" /> : isCompleted ? <CheckCircle2 className="w-7 h-7" /> : (idx + 1)}
+      <div className="relative z-10 flex gap-5 sm:gap-6 items-start">
+        <div className="shrink-0 mt-6 flex flex-col items-center w-[3.75rem]">
+          <div
+            className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center text-sm sm:text-base font-black shadow-sm z-10 ring-4 ring-[#F8F9FA] ${iconBg}`}
+          >
+            {locked ? <Lock className="w-5 h-5 sm:w-6 sm:h-6" aria-hidden /> : isCompleted ? <CheckCircle2 className="w-6 h-6 sm:w-7 sm:h-7" aria-hidden /> : idx + 1}
           </div>
-          <div className={`absolute top-24 w-3 h-3 rounded-full ring-4 z-10 transition-all duration-300 ${dotColor}`} />
         </div>
 
-        {/* Content Card */}
-        <div className={`flex-1 rounded-2xl border transition-all duration-300 overflow-hidden ${cardBorder}`}>
-          <button
-            type="button"
-            onClick={onToggle}
-            className="w-full text-left px-6 py-5 flex items-start sm:items-center justify-between gap-4"
-          >
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-3 mb-2 flex-wrap">
-                <StatusPill 
-                  label={locked ? 'Locked' : isCompleted ? 'Completed' : isInProgress ? 'In Progress' : 'Not Started'} 
-                  status={locked ? 'locked' : isCompleted ? 'completed' : isInProgress ? 'in-progress' : 'not-started'} 
+        <div
+          className={`flex-1 min-w-0 rounded-2xl border transition-shadow duration-300 overflow-hidden hover:shadow-md ${cardShell}`}
+        >
+          <div className={`h-1 w-full ${accentBar}`} aria-hidden />
+
+          <div className="w-full px-5 py-5 sm:px-6 sm:py-6 flex items-start justify-between gap-4">
+            <button
+              type="button"
+              onClick={() => onGo()}
+              disabled={locked}
+              className="flex-1 min-w-0 text-left disabled:cursor-not-allowed disabled:opacity-60 group/title"
+            >
+              <div className="flex items-center gap-2 mb-3 flex-wrap">
+                <StatusPill
+                  label={locked ? 'Locked' : isCompleted ? 'Completed' : isInProgress ? 'In progress' : 'Not started'}
+                  status={locked ? 'locked' : isCompleted ? 'completed' : isInProgress ? 'in-progress' : 'not-started'}
                 />
                 {!locked && prereqCount > 0 && (
-                  <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-2 py-0.5 rounded-full ${prereqBlocked ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'}`}>
-                    <ShieldCheck className="w-3.5 h-3.5" />
-                    {prereqCleared}/{prereqCount} Prereqs
+                  <span
+                    className={`inline-flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide px-2.5 py-1 rounded-lg ${
+                      prereqBlocked ? 'bg-amber-100 text-amber-900' : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                    Prereqs {prereqCleared}/{prereqCount}
                   </span>
                 )}
                 {!locked && (
-                  <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
-                    <ListChecks className="w-3.5 h-3.5" />
-                    {doneSub}/{totalSub} Modules
+                  <span className="inline-flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600">
+                    <ListChecks className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                    Modules {doneSub}/{totalSub}
                   </span>
                 )}
               </div>
-              <h3 className={`text-lg sm:text-xl font-extrabold truncate ${locked ? 'text-slate-500' : 'text-slate-900'}`}>
+              <h3
+                className={`text-lg sm:text-xl font-black tracking-tight leading-snug ${locked ? 'text-slate-500' : 'text-slate-900 group-hover/title:text-[#006A91]'}`}
+              >
                 {topic.title}
               </h3>
-            </div>
+              {!locked && (
+                <p className="text-xs font-semibold text-slate-500 mt-2">
+                  Open to see outline, videos, and quizzes — picks up where you left off.
+                </p>
+              )}
+            </button>
 
-            <div className="flex flex-col sm:flex-row items-end sm:items-center gap-4 shrink-0">
+            <div className="flex flex-col items-end gap-3 shrink-0">
               {!locked && (
                 <div className="text-right hidden sm:block">
-                  <p className={`text-xl font-black leading-none ${isCompleted ? 'text-emerald-600' : 'text-blue-600'}`}>{topic.progress}%</p>
-                  <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-wider">Progress</p>
+                  <p
+                    className={`text-2xl font-black tabular-nums leading-none ${isCompleted ? 'text-emerald-600' : 'text-[#0084B4]'}`}
+                  >
+                    {topic.progress}%
+                  </p>
+                  <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-wider">Topic progress</p>
                 </div>
               )}
-              <div className={`p-2 rounded-full transition-colors ${open ? 'bg-slate-100' : 'hover:bg-slate-50'}`}>
-                <ChevronDown className={`w-5 h-5 text-slate-400 transition-transform duration-300 ${open ? 'rotate-180' : ''}`} />
-              </div>
+              <button
+                type="button"
+                aria-expanded={open}
+                aria-label={open ? 'Collapse topic details' : 'Expand topic details'}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggle();
+                }}
+                className={`p-2.5 rounded-xl border transition-colors ${open ? 'bg-slate-100 border-slate-200' : 'border-transparent hover:bg-slate-100 hover:border-slate-200'}`}
+              >
+                <ChevronDown
+                  className={`w-5 h-5 text-slate-500 transition-transform duration-300 ${open ? 'rotate-180' : ''}`}
+                />
+              </button>
             </div>
-          </button>
+          </div>
 
           {!locked && (
-            <div className="px-6 pb-4">
-              <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+            <div className="px-5 sm:px-6 pb-5">
+              <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
                 <motion.div
-                  className={`h-full rounded-full transition-all duration-1000 ${isCompleted ? 'bg-emerald-500' : 'bg-gradient-to-r from-blue-400 to-blue-600'}`}
+                  className={`h-full rounded-full ${isCompleted ? 'bg-emerald-500' : 'bg-[#0084B4]'}`}
                   initial={{ width: 0 }}
                   animate={{ width: `${topic.progress}%` }}
                 />
@@ -196,10 +205,10 @@ function RoadmapTopicItem({
           <motion.div
             initial={false}
             animate={{ height: open ? 'auto' : 0, opacity: open ? 1 : 0 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: 0.22 }}
             className="overflow-hidden"
           >
-            <div className="px-6 pb-6 pt-2 border-t border-slate-100 bg-slate-50/50">
+            <div className="px-5 sm:px-6 pb-6 pt-1 border-t border-slate-100/90 bg-gradient-to-b from-slate-50/90 to-slate-50/40">
               {locked && action.reason && (
                 <div className="mb-5 flex items-start gap-3 bg-slate-100 border border-slate-200 rounded-xl p-4">
                   <div className="p-2 bg-white rounded-lg shadow-sm">
@@ -226,30 +235,29 @@ function RoadmapTopicItem({
                 </div>
               )}
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-blue-200 transition-colors">
-                  <Video className="w-5 h-5 text-slate-400 mb-2" />
-                  <p className="text-2xl font-black text-slate-900">{videoCount}</p>
-                  <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider mt-1">Videos</p>
-                </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-blue-200 transition-colors">
-                  <HelpCircle className="w-5 h-5 text-slate-400 mb-2" />
-                  <p className="text-2xl font-black text-slate-900">{quizCount}</p>
-                  <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider mt-1">Questions</p>
-                </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-blue-200 transition-colors">
-                  <ListChecks className="w-5 h-5 text-slate-400 mb-2" />
-                  <p className="text-2xl font-black text-slate-900">{doneSub}<span className="text-slate-400 text-lg">/{totalSub}</span></p>
-                  <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider mt-1">Subtopics</p>
-                </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-blue-200 transition-colors">
-                  <ShieldCheck className="w-5 h-5 text-slate-400 mb-2" />
-                  <p className="text-2xl font-black text-slate-900">{prereqCleared}<span className="text-slate-400 text-lg">/{prereqCount}</span></p>
-                  <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider mt-1">Prereqs</p>
-                </div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {[
+                  { icon: Video, value: videoCount, label: 'Videos' },
+                  { icon: HelpCircle, value: quizCount, label: 'Questions' },
+                  { icon: ListChecks, value: `${doneSub}/${totalSub}`, label: 'Modules' },
+                  { icon: ShieldCheck, value: `${prereqCleared}/${prereqCount}`, label: 'Prereqs' },
+                ].map(({ icon: Icon, value, label }) => (
+                  <div
+                    key={label}
+                    className="bg-white/90 border border-slate-200/80 rounded-2xl p-4 shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="p-1.5 rounded-lg bg-slate-100 text-slate-500">
+                        <Icon className="w-4 h-4" aria-hidden />
+                      </div>
+                      <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">{label}</p>
+                    </div>
+                    <p className="text-2xl font-black text-slate-900 tabular-nums">{value}</p>
+                  </div>
+                ))}
               </div>
 
-              <div className="mt-6 flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+              <div className="mt-5 flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between bg-white/95 p-4 sm:p-5 rounded-2xl border border-slate-200/80">
                 <div className="text-sm font-medium text-slate-600 flex-1">
                   {action.label === 'Review' && 'You have completed this topic. Revisit content or retry quizzes anytime.'}
                   {action.label === 'Continue' && 'You are currently learning this topic. Resume where you left off.'}
@@ -257,7 +265,7 @@ function RoadmapTopicItem({
                   {action.label === 'Locked' && 'Finish previous topics to unlock this content.'}
                 </div>
                 <button
-                  onClick={onGo}
+                  onClick={() => onGo()}
                   disabled={action.disabled}
                   className={`shrink-0 inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-extrabold transition-all shadow-sm
                     ${action.disabled
@@ -295,7 +303,6 @@ export function Courses() {
     useApiGet<{ curriculums: any[]; message?: string }>('/api/student/curriculum');
 
   const curriculums = curriculumData?.curriculums ?? [];
-  const hasRealData = !curriculumLoading && curriculums.length > 0;
   const notEnrolled = !curriculumLoading && curriculums.length === 0;
 
   // Use URL param to set initial selection if provided, otherwise default to 0
@@ -315,42 +322,11 @@ export function Courses() {
 
   const activeCurriculum = curriculums[selectedClassIdx] || null;
 
-  const standard = hasRealData ? '' : '';
   const section = activeCurriculum ? activeCurriculum.className : '';
 
   // Map real topics to the StudentTopicProgress shape for the existing UI
   const realTopics: StudentTopicProgress[] = activeCurriculum
-    ? (activeCurriculum.topics ?? []).map((t: any) => {
-        const prog = t.progress;
-        const subTopics = t.subTopics ?? [];
-        const subTopicsDone = subTopics.filter((st: any) => st.progress?.quizStatus === 'passed').length;
-        return {
-          id: t.id,
-          title: t.name,
-          status: prog?.completedAt ? 'completed' : (prog ? 'in-progress' : 'not-started') as 'completed' | 'in-progress' | 'not-started',
-          progress: subTopics.length > 0 ? Math.round((subTopicsDone / subTopics.length) * 100) : 0,
-          prerequisites: t.prerequisite ? [{
-            id: t.prerequisite.id,
-            title: t.prerequisite.name ?? 'Prerequisite Check',
-            description: t.prerequisite.description,
-            category: 'Intermediate' as const,
-            passingThreshold: t.prerequisite.passingThreshold ?? 60,
-            questions: (t.prerequisite.questions ?? []).map(mapApiQuestion),
-          }] : [],
-          prerequisiteScores: [],
-          subtopicsCompleted: subTopicsDone,
-          totalSubtopics: subTopics.length,
-          finalTestQuiz: (t.finalTestQuestions ?? []).map(mapApiQuestion),
-          subTopics: subTopics.map((st: any) => ({
-            id: st.id,
-            title: st.name,
-            status: st.progress?.quizStatus === 'passed' ? 'completed' : st.progress ? 'in-progress' : 'not-started' as 'completed' | 'in-progress' | 'not-started',
-            videoUrl: st.youtubeUrl,
-            videoWatched: st.progress?.videoWatched ?? false,
-            quizzes: (st.questions ?? []).map(mapApiQuestion),
-          })),
-        };
-      })
+    ? (activeCurriculum.topics ?? []).map(mapRawTopicToStudentTopic)
     : [];
 
   const topics = realTopics;
@@ -465,72 +441,43 @@ export function Courses() {
           </motion.div>
         )}
 
-        {/* Header + Legend */}
-        <motion.div variants={itemVariants} className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="bg-gradient-to-r from-blue-900 via-[#0084B4] to-blue-500 p-8 sm:p-10 relative overflow-hidden">
-            {/* Background Decorations */}
-            <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
-            <div className="absolute bottom-0 left-0 w-48 h-48 bg-blue-400/20 rounded-full blur-2xl translate-y-1/2 -translate-x-1/2" />
-            
-            <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-8">
-              <div className="text-white min-w-0">
-                <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/20 backdrop-blur-sm rounded-full text-xs font-bold uppercase tracking-wider mb-4 border border-white/10">
-                  <Sparkles className="w-3.5 h-3.5" /> Learning Journey
-                </div>
-                <h1 className="text-3xl sm:text-4xl font-black tracking-tight mb-2 text-white">Your Curriculum</h1>
-                <p className="text-blue-100 text-lg font-medium">
-                  {[standard, section].filter(Boolean).join(' · ')}{section ? ' · ' : ''}
-                  <span className="font-bold text-white ml-1">{completedTopics}/{totalTopics} modules completed</span>
-                </p>
-              </div>
-
-              <div className="w-full lg:w-[360px] bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-6 shadow-xl">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-bold text-blue-100 uppercase tracking-wider">Overall Progress</p>
-                  <TrendingUp className="w-5 h-5 text-white opacity-80" />
-                </div>
-                <div className="flex items-end gap-2 mb-4">
-                  <p className="text-4xl font-black text-white leading-none">{overallProgress}%</p>
-                </div>
-                <div className="h-2.5 bg-black/20 rounded-full overflow-hidden border border-white/10">
-                  <div className="h-full bg-white rounded-full shadow-[0_0_10px_rgba(255,255,255,0.5)]" style={{ width: `${overallProgress}%` }} />
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          <div className="px-8 py-5 border-t border-slate-100 bg-slate-50 flex items-center justify-between gap-4 flex-wrap">
-            <div className="flex gap-3 flex-wrap">
-              <StatusPill label="Completed" status="completed" />
-              <StatusPill label="In Progress" status="in-progress" />
-              <StatusPill label="Not Started" status="not-started" />
-              <StatusPill label="Locked" status="locked" />
-            </div>
-
-            {upNextTopic && (
-              <button
-                onClick={() => navigate('/learn', { state: { topicIdx: upNextIdx, studentTopic: upNextTopic, curriculums, selectedClassIdx } })}
-                disabled={upNextIdx > 0 && topics[upNextIdx - 1]?.status === 'not-started'}
-                className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-extrabold transition-all shadow-sm
-                  ${upNextIdx > 0 && topics[upNextIdx - 1]?.status === 'not-started'
-                    ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
-                    : 'bg-[#0084B4] text-white hover:bg-[#006A91] hover:shadow-md'}`}
-              >
-                <PlayCircle className="w-5 h-5" /> Jump Back In <ChevronRight className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        </motion.div>
-
         {/* Roadmap timeline */}
         <motion.div variants={itemVariants} className="px-2 sm:px-6 py-4">
-          <div className="flex items-center justify-between mb-8">
-            <div>
-              <h2 className="text-xl font-extrabold text-slate-900">Learning Path</h2>
-              <p className="text-sm font-medium text-slate-500 mt-1">
-                Complete modules in sequence to master the curriculum.
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between mb-8">
+            <div className="min-w-0">
+              <p className="text-[11px] font-extrabold text-[#0084B4] uppercase tracking-widest mb-1">
+                {section || 'Curriculum'}
               </p>
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">Learning path</h2>
+              <p className="text-sm text-slate-600 mt-2 max-w-xl leading-relaxed">
+                Work through topics in order.{totalTopics > 0 ? ` ${completedTopics} of ${totalTopics} completed · ${overallProgress}% overall.` : ''}
+              </p>
+              <div className="flex flex-wrap gap-2 mt-4">
+                <StatusPill label="Completed" status="completed" />
+                <StatusPill label="In Progress" status="in-progress" />
+                <StatusPill label="Not Started" status="not-started" />
+                <StatusPill label="Locked" status="locked" />
+              </div>
             </div>
+            {upNextTopic && (
+              <button
+                type="button"
+                onClick={() =>
+                  navigate('/learn', {
+                    state: { topicIdx: upNextIdx, studentTopic: upNextTopic, curriculums, selectedClassIdx },
+                  })
+                }
+                disabled={upNextIdx > 0 && topics[upNextIdx - 1]?.status === 'not-started'}
+                className={`shrink-0 inline-flex items-center justify-center gap-2 px-5 py-3 rounded-2xl text-sm font-extrabold transition-all
+                  ${upNextIdx > 0 && topics[upNextIdx - 1]?.status === 'not-started'
+                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                    : 'bg-slate-900 text-white hover:bg-slate-800 shadow-md hover:shadow-lg'}`}
+              >
+                <PlayCircle className="w-5 h-5" aria-hidden />
+                Resume / next topic
+                <ChevronRight className="w-4 h-4 opacity-80" aria-hidden />
+              </button>
+            )}
           </div>
 
           {topics.length === 0 && !curriculumLoading && !curriculumError && !notEnrolled && (
@@ -556,7 +503,14 @@ export function Courses() {
                   open={open}
                   onToggle={() => setOpenId((p) => (p === topic.id ? null : topic.id))}
                   onGo={() => {
-                    navigate('/learn', { state: { topicIdx: idx, studentTopic: topic, curriculums, selectedClassIdx } });
+                    navigate('/learn', {
+                      state: {
+                        topicIdx: idx,
+                        studentTopic: topic,
+                        curriculums,
+                        selectedClassIdx,
+                      },
+                    });
                   }}
                 />
               );

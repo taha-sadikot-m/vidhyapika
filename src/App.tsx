@@ -21,6 +21,7 @@ import { Settings } from './screens/Settings';
 import { AdminLogin } from './screens/admin/AdminLogin';
 import { AdminForgotPassword } from './screens/admin/AdminForgotPassword';
 import { AdminDashboard } from './screens/admin/AdminDashboard';
+import { AdminAnalytics } from './screens/admin/AdminAnalytics';
 import { AdminCourses } from './screens/admin/AdminCourses';
 import { AdminCurriculum } from './screens/admin/AdminCurriculum';
 import { AdminStudents } from './screens/admin/AdminStudents';
@@ -81,6 +82,7 @@ export default function App() {
         <Route path="/admin/login" element={<AdminLogin />} />
         <Route path="/admin/forgot-password" element={<AdminForgotPassword />} />
         <Route path="/admin/dashboard" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
+        <Route path="/admin/analytics" element={<AdminRoute><AdminAnalytics /></AdminRoute>} />
         <Route path="/admin/courses" element={<AdminRoute><AdminCourses /></AdminRoute>} />
         <Route path="/admin/curriculum" element={<AdminRoute><AdminCurriculum /></AdminRoute>} />
         <Route path="/admin/students" element={<AdminRoute><AdminStudents /></AdminRoute>} />

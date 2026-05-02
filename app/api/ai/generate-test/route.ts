@@ -1,7 +1,10 @@
 import { verifyJWT, requireAuth } from "../../../../backend/middleware/auth";
 import { generateRetakeQuestions } from "../../../../backend/services/ai";
 import { getTopic, getSubTopic, getPrerequisite, listQuestions } from "../../../../backend/repositories/curriculumRepo";
+import { countFailedAiRetakes } from "../../../../backend/repositories/progressRepo";
 import { z } from "zod";
+
+const MAX_AI_COACHING_CYCLES = 3;
 
 const Schema = z.object({
   topicId: z.string().min(1),
@@ -24,9 +27,25 @@ export async function POST(req: Request) {
   const err = requireAuth(user);
   if (err) return err;
 
+  const studentId = user!.sub;
+
   try {
     const body = Schema.parse(await req.json());
     const { topicId, subTopicId, contextType, contextId, failedQuestions, count } = body;
+
+    const failedAi = await countFailedAiRetakes(studentId, contextType, contextId);
+    if (failedAi >= MAX_AI_COACHING_CYCLES) {
+      return Response.json(
+        {
+          error:
+            "You have used all AI coaching and retest attempts for this quiz. Please contact your instructor for help.",
+          code: "AI_COACHING_CAP",
+          failedAiRetakes: failedAi,
+          maxAiCoachingCycles: MAX_AI_COACHING_CYCLES,
+        },
+        { status: 403 }
+      );
+    }
 
     const [topic, subTopic] = await Promise.all([
       getTopic(topicId),

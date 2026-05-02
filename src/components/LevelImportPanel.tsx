@@ -1,11 +1,14 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useMemo, useState, useCallback, useRef } from 'react';
 import {
   Upload, Download, Clipboard, ChevronDown, ChevronRight,
   AlertTriangle, CheckCircle2, Info, X, FileText, Table2,
-  Check, Square, CheckSquare,
+  Check, Square, CheckSquare, Trash2, Plus, Search, Loader2, RotateCcw,
 } from 'lucide-react';
 import {
   parseLevelData, generateLevelTemplateCSV, LEVEL_COLUMN_DOCS,
+  validateLevelRows, rowsToItems, getLevelEditorColumns,
+  getLevelCellEditor,
+  normalizeEditableRowCells,
   type LevelParseTarget,
 } from '../utils/csvImport';
 
@@ -16,8 +19,17 @@ interface LevelImportPanelProps {
   target: LevelParseTarget;
   /** Accent colour class suffix — e.g. "blue", "purple", "orange", "emerald" */
   accent?: 'blue' | 'purple' | 'orange' | 'emerald' | 'indigo';
-  /** Called when user confirms; receives the selected parsed items */
-  onImport: (items: any[]) => void;
+  /**
+   * Called when user confirms upload.
+   * Should perform the DB upload (preferably bulk) and can return row-indexed results.
+   */
+  onImport: (args: {
+    items: any[];
+    rows: Record<string, string>[];
+  }) => void | Promise<{
+    created: { index: number; id: string }[];
+    errors: { index: number; message: string; field?: string }[];
+  }>;
   /** Optional extra context label shown in the panel header */
   contextLabel?: string;
 }
@@ -47,7 +59,7 @@ const TARGET_PASTE_PLACEHOLDER: Record<LevelParseTarget, string> = {
   prerequisites:
     'Paste Excel data here.\n\nExpected columns:\nprereq_title  prereq_category\n\nExample:\nBasic Arithmetic\tMajor',
   questions:
-    'Paste Excel data here.\n\nExpected columns:\nquestion_text  question_type  option_a  option_b  option_c  option_d  correct_answer  explanation  difficulty\n\nExample:\nWhat is 2+2?\tmcq\t3\t4\t5\t6\t4\tTwo plus two equals four.\tEasy',
+    'Paste Excel data here.\n\nColumns (image_url optional):\nquestion_text  image_url  question_type  option_a … option_d  correct_answer  explanation  difficulty\n\nTypes: mcq | true_false | text | image_upload\n\nExample:\nWhat is 2+2?\t\tmcq\t3\t4\t5\t6\t4\tTwo plus two equals four.\tEasy',
 };
 
 // ─── Preview table column defs per target ────────────────────────────────────
@@ -83,34 +95,51 @@ export function LevelImportPanel({
 }: LevelImportPanelProps) {
   const ac = ACCENT_CLASSES[accent];
 
-  type PanelStep = 'collapsed' | 'input' | 'preview' | 'done';
+  type PanelStep = 'collapsed' | 'input' | 'preview' | 'uploading' | 'done';
   const [step, setStep]               = useState<PanelStep>('collapsed');
   const [inputTab, setInputTab]       = useState<'file' | 'paste'>('file');
   const [pasteText, setPasteText]     = useState('');
   const [fileName, setFileName]       = useState('');
   const [parseResult, setParseResult] = useState<ReturnType<typeof parseLevelData> | null>(null);
-  const [selected, setSelected]       = useState<Set<number>>(new Set());
+  const [editableRows, setEditableRows] = useState<{ id: string; active: boolean; cells: Record<string, string> }[]>([]);
+  const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set());
   const [dragging, setDragging]       = useState(false);
   const [showCols, setShowCols]       = useState(false);
+  const [query, setQuery]             = useState('');
+  const [page, setPage]               = useState(1);
+  const [pageSize, setPageSize]       = useState(10);
+  const [uploadResult, setUploadResult] = useState<{ created: { index: number; id: string }[]; errors: { index: number; message: string; field?: string }[] } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const rowId = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
   const reset = () => {
     setStep('collapsed');
     setPasteText('');
     setFileName('');
     setParseResult(null);
-    setSelected(new Set());
+    setEditableRows([]);
+    setSelectedRowIds(new Set());
     setShowCols(false);
+    setQuery('');
+    setPage(1);
+    setPageSize(10);
+    setUploadResult(null);
   };
 
   // ── Parse helper ────────────────────────────────────────────────────────────
   const runParse = useCallback((text: string) => {
     const result = parseLevelData(text, target);
     setParseResult(result);
-    // Pre-select all valid rows
-    const validIndices = new Set<number>();
-    result.items.forEach((_, i) => validIndices.add(i));
-    setSelected(validIndices);
+    const nextRows = (result.rows ?? []).map((cells) => ({
+      id: rowId(),
+      active: true,
+      cells: normalizeEditableRowCells(target, { ...cells }),
+    }));
+    setEditableRows(nextRows);
+    setSelectedRowIds(new Set(nextRows.map(r => r.id)));
+    setUploadResult(null);
+    setQuery('');
+    setPage(1);
     setStep('preview');
   }, [target]);
 
@@ -145,28 +174,101 @@ export function LevelImportPanel({
     runParse(pasteText);
   };
 
-  // ── Selection helpers ────────────────────────────────────────────────────────
-  const toggleRow = (i: number) => {
-    setSelected(prev => {
+  // ── Editable rows + validation ───────────────────────────────────────────────
+  const editorCols = useMemo(() => getLevelEditorColumns(target), [target]);
+
+  const activeRows = useMemo(() => editableRows.filter(r => r.active), [editableRows]);
+  const activeCells = useMemo(() => activeRows.map(r => r.cells), [activeRows]);
+
+  const validation = useMemo(() => validateLevelRows(activeCells, target), [activeCells, target]);
+
+  /** Map validation to stable row ids (fixes wrong highlights when search/filter is active). */
+  const errorsByRowId = useMemo(() => {
+    const by: Record<string, { column: string; message: string }[]> = {};
+    for (const e of validation.rowErrors) {
+      const id = activeRows[e.index]?.id;
+      if (!id) continue;
+      by[id] = by[id] ?? [];
+      by[id]!.push({ column: e.column, message: e.message });
+    }
+    return by;
+  }, [validation.rowErrors, activeRows]);
+
+  const rowsWithIssueCount = useMemo(
+    () => activeRows.reduce((n, r) => n + ((errorsByRowId[r.id]?.length ?? 0) > 0 ? 1 : 0), 0),
+    [activeRows, errorsByRowId],
+  );
+
+  const queryLower = query.trim().toLowerCase();
+  const filteredActiveRows = useMemo(() => {
+    if (!queryLower) return activeRows;
+    return activeRows.filter(r => {
+      return editorCols.some((k) => (r.cells?.[k] ?? '').toLowerCase().includes(queryLower));
+    });
+  }, [activeRows, editorCols, queryLower]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredActiveRows.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pageRows = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filteredActiveRows.slice(start, start + pageSize);
+  }, [filteredActiveRows, pageSize, safePage]);
+
+  const toggleRowSelected = (rowId: string) => {
+    setSelectedRowIds(prev => {
       const next = new Set(prev);
-      next.has(i) ? next.delete(i) : next.add(i);
+      next.has(rowId) ? next.delete(rowId) : next.add(rowId);
       return next;
     });
   };
 
-  const selectAll = () => {
-    if (!parseResult) return;
-    setSelected(new Set(parseResult.items.map((_, i) => i)));
+  const selectAllVisible = () => {
+    setSelectedRowIds(prev => {
+      const next = new Set(prev);
+      pageRows.forEach(r => next.add(r.id));
+      return next;
+    });
   };
 
-  const selectNone = () => setSelected(new Set());
+  const selectNone = () => setSelectedRowIds(new Set());
 
-  // ── Confirm import ───────────────────────────────────────────────────────────
-  const confirmImport = () => {
-    if (!parseResult) return;
-    const chosen = parseResult.items.filter((_, i) => selected.has(i));
-    onImport(chosen);
-    setStep('done');
+  const deleteSelected = () => {
+    if (selectedRowIds.size === 0) return;
+    setEditableRows(prev => prev.map(r => selectedRowIds.has(r.id) ? { ...r, active: false } : r));
+    setSelectedRowIds(new Set());
+  };
+
+  const addRow = () => {
+    const blank: Record<string, string> = {};
+    editorCols.forEach(c => { blank[c] = ''; });
+    const nr = { id: rowId(), active: true, cells: blank };
+    setEditableRows(prev => [nr, ...prev]);
+    setSelectedRowIds(prev => new Set(prev).add(nr.id));
+    setPage(1);
+  };
+
+  const setCell = (rowId: string, key: string, value: string) => {
+    setEditableRows(prev => prev.map(r => r.id === rowId ? { ...r, cells: { ...r.cells, [key]: value } } : r));
+  };
+
+  // ── Confirm upload ───────────────────────────────────────────────────────────
+  const confirmUpload = async () => {
+    const active = editableRows.filter(r => r.active);
+    const rows = active.map(r => r.cells);
+    const items = rowsToItems(rows, target);
+    setStep('uploading');
+    try {
+      const res = await onImport({ items, rows });
+      if (res && typeof (res as any).created !== 'undefined') {
+        setUploadResult(res as any);
+      } else {
+        setUploadResult(null);
+      }
+      setStep('done');
+    } catch (e: any) {
+      setUploadResult({ created: [], errors: [{ index: 0, message: e?.message ?? 'Upload failed' }] });
+      setStep('done');
+    }
   };
 
   // ── Template download ────────────────────────────────────────────────────────
@@ -207,6 +309,27 @@ export function LevelImportPanel({
           <CheckCircle2 className="w-7 h-7 text-emerald-600" />
         </div>
         <p className={`font-bold ${ac.text}`}>Import complete!</p>
+        {uploadResult && (
+          <div className="w-full max-w-md text-left bg-white/60 border border-white/40 rounded-xl p-3 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-slate-700">Created</span>
+              <span className="font-extrabold text-emerald-700">{uploadResult.created.length}</span>
+            </div>
+            <div className="flex items-center justify-between mt-1">
+              <span className="font-bold text-slate-700">Errors</span>
+              <span className={`font-extrabold ${uploadResult.errors.length ? 'text-red-700' : 'text-slate-500'}`}>{uploadResult.errors.length}</span>
+            </div>
+            {uploadResult.errors.length > 0 && (
+              <div className="mt-2 max-h-28 overflow-y-auto space-y-1 pr-1">
+                {uploadResult.errors.slice(0, 20).map((e, i) => (
+                  <div key={i} className="bg-red-50 border border-red-200 rounded-lg px-2 py-1 text-red-700">
+                    <span className="font-bold">Row {e.index + 1}</span>{e.field ? <span className="opacity-80"> [{e.field}]</span> : null}: {e.message}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <button onClick={reset} className={`px-4 py-2 text-xs font-bold rounded-lg text-white ${ac.btn}`}>
           Import More
         </button>
@@ -214,11 +337,25 @@ export function LevelImportPanel({
     </div>
   );
 
-  // ── Preview ──────────────────────────────────────────────────────────────────
+  // ── Uploading ────────────────────────────────────────────────────────────────
+  if (step === 'uploading') {
+    return (
+      <div className={`rounded-xl border ${ac.border} overflow-hidden`}>
+        {header}
+        <div className="p-6 bg-white flex flex-col items-center gap-3 text-center">
+          <Loader2 className={`w-8 h-8 animate-spin ${ac.text}`} />
+          <p className="text-sm font-bold text-slate-800">Uploading…</p>
+          <p className="text-xs text-slate-500">Please wait while we create records in the database.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Preview/Edit ─────────────────────────────────────────────────────────────
   if (step === 'preview' && parseResult) {
-    const { items, errors, rows } = parseResult;
-    const hasErrors = errors.length > 0;
-    const cols = PREVIEW_COLS[target];
+    const hasParseErrors = (parseResult.errors?.length ?? 0) > 0;
+    const hasValidationErrors = validation.rowErrors.length > 0;
+    const canUpload = activeRows.length > 0 && rowsWithIssueCount === 0;
 
     return (
       <div className={`rounded-xl border ${ac.border} overflow-hidden`}>
@@ -239,14 +376,14 @@ export function LevelImportPanel({
             </button>
           </div>
 
-          {/* Errors */}
-          {hasErrors && (
+          {/* Parse errors (skipped rows) */}
+          {hasParseErrors && (
             <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-1.5">
               <div className="flex items-center gap-2 text-red-700 font-bold text-sm">
-                <AlertTriangle className="w-4 h-4" /> {errors.length} row{errors.length > 1 ? 's' : ''} with errors (skipped)
+                <AlertTriangle className="w-4 h-4" /> {parseResult.errors.length} row{parseResult.errors.length > 1 ? 's' : ''} with parse errors (skipped)
               </div>
               <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
-                {errors.map((err, i) => (
+                {parseResult.errors.map((err, i) => (
                   <div key={i} className="text-xs text-red-700 bg-red-100 rounded-lg px-3 py-1.5 font-medium">
                     <span className="font-bold">Row {err.row}</span>
                     {err.column && <span className="text-red-500"> [{err.column}]</span>}: {err.message}
@@ -256,68 +393,168 @@ export function LevelImportPanel({
             </div>
           )}
 
-          {/* Select helpers */}
-          {items.length > 0 && (
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <button onClick={selectAll} className="text-xs font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1">
-                  <CheckSquare className="w-3.5 h-3.5" /> All
-                </button>
-                <button onClick={selectNone} className="text-xs font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1">
-                  <Square className="w-3.5 h-3.5" /> None
-                </button>
-              </div>
-              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${ac.badge}`}>
-                {selected.size} of {items.length} selected
-              </span>
+          {/* Toolbar */}
+          <div className="flex flex-col lg:flex-row gap-3 lg:items-center lg:justify-between">
+            <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+              <button
+                type="button"
+                onClick={addRow}
+                className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 text-xs font-extrabold hover:bg-slate-50 flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" /> Add Row
+              </button>
+              <button
+                type="button"
+                onClick={deleteSelected}
+                disabled={selectedRowIds.size === 0}
+                className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 text-xs font-extrabold hover:bg-slate-50 disabled:opacity-40 flex items-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" /> Remove Selected
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditableRows((parseResult.rows ?? []).map(c => ({
+                    id: rowId(),
+                    active: true,
+                    cells: normalizeEditableRowCells(target, { ...c }),
+                  })));
+                  setSelectedRowIds(new Set());
+                  setQuery('');
+                  setPage(1);
+                }}
+                className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 text-xs font-extrabold hover:bg-slate-50 flex items-center gap-2"
+              >
+                <RotateCcw className="w-4 h-4" /> Reset
+              </button>
             </div>
-          )}
 
-          {/* Preview table */}
-          {items.length > 0 ? (
+            <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  value={query}
+                  onChange={(e) => { setQuery(e.target.value); setPage(1); }}
+                  placeholder="Search rows…"
+                  className="pl-9 pr-3 py-2 text-xs font-semibold w-full sm:w-64 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                />
+              </div>
+              <div className={`text-[10px] font-extrabold px-2.5 py-2 rounded-xl ${ac.badge}`}>
+                {activeRows.length} active • {activeRows.length - rowsWithIssueCount} valid row{activeRows.length - rowsWithIssueCount !== 1 ? 's' : ''}
+                {rowsWithIssueCount > 0 ? ` • ${rowsWithIssueCount} with issues (${validation.rowErrors.length} messages)` : ''}
+              </div>
+            </div>
+          </div>
+
+          {/* Editable table */}
+          {activeRows.length > 0 ? (
             <div className="border border-slate-200 rounded-xl overflow-hidden">
-              <div className="overflow-x-auto max-h-64 overflow-y-auto">
+              <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead className="sticky top-0 bg-slate-50 z-10">
                     <tr className="border-b border-slate-200">
-                      <th className="py-2.5 px-3 w-8"></th>
-                      {cols.map(col => (
-                        <th key={col.key} className={`py-2.5 px-3 font-bold text-slate-600 uppercase tracking-wider ${col.width ?? ''}`}>
-                          {col.label}
+                      <th className="py-2.5 px-3 w-10"></th>
+                      {editorCols.map((key) => (
+                        <th key={key} className="py-2.5 px-3 font-bold text-slate-600 uppercase tracking-wider whitespace-nowrap">
+                          {key}
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {items.map((item, i) => (
-                      <tr
-                        key={i}
-                        onClick={() => toggleRow(i)}
-                        className={`cursor-pointer transition-colors ${selected.has(i) ? 'bg-blue-50 hover:bg-blue-100' : 'hover:bg-slate-50 opacity-50'}`}
-                      >
-                        <td className="py-2 px-3">
-                          <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${selected.has(i) ? `${ac.badge} border-current` : 'border-slate-300'}`}>
-                            {selected.has(i) && <Check className="w-2.5 h-2.5" />}
-                          </div>
-                        </td>
-                        {cols.map(col => (
-                          <td key={col.key} className="py-2 px-3 text-slate-700 font-medium max-w-xs truncate">
-                            {rows[i]?.[col.key] ?? (item as any)[col.key.replace('topic_', '').replace('subtopic_', '').replace('prereq_', '').replace('question_', '')] ?? ''}
+                    {pageRows.map((r) => {
+                      const rowIssues = errorsByRowId[r.id] ?? [];
+                      const selected = selectedRowIds.has(r.id);
+                      return (
+                        <tr key={r.id} className={`transition-colors ${rowIssues.length ? 'bg-red-50/30' : selected ? 'bg-blue-50' : 'bg-white'} hover:bg-slate-50`}>
+                          <td className="py-2 px-3 align-top">
+                            <button
+                              type="button"
+                              onClick={() => toggleRowSelected(r.id)}
+                              className="w-5 h-5 rounded border-2 flex items-center justify-center"
+                            >
+                              {selected ? <Check className="w-3 h-3" /> : null}
+                            </button>
+                            {rowIssues.length > 0 && (
+                              <div className="mt-1 text-[10px] font-bold text-red-700 leading-tight max-w-[4.5rem]">
+                                {rowIssues.map((issue, ii) => (
+                                  <div key={ii} title={`${issue.column}: ${issue.message}`}>{issue.column}</div>
+                                ))}
+                              </div>
+                            )}
                           </td>
-                        ))}
-                      </tr>
-                    ))}
+                          {editorCols.map((k) => {
+                            const ed = getLevelCellEditor(target, k, r.cells ?? {});
+                            const cellErr = rowIssues.some(x => x.column === k);
+                            const fieldCls = `w-full min-w-[140px] px-3 py-2 rounded-xl border text-xs font-semibold outline-none ${
+                              cellErr
+                                ? 'border-red-300 bg-red-50 focus:ring-2 focus:ring-red-500/10'
+                                : 'border-slate-200 bg-white focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500'
+                            }`;
+                            if (ed.kind === 'select') {
+                              return (
+                                <td key={k} className="py-2 px-3 align-top">
+                                  <select
+                                    value={r.cells?.[k] ?? ''}
+                                    aria-label={k}
+                                    onChange={(e) => setCell(r.id, k, e.target.value)}
+                                    className={fieldCls}
+                                  >
+                                    {ed.options.map((o, oi) => (
+                                      <option key={`${r.id}-${k}-${oi}-${o.value}`} value={o.value}>{o.label}</option>
+                                    ))}
+                                  </select>
+                                </td>
+                              );
+                            }
+                            return (
+                              <td key={k} className="py-2 px-3 align-top">
+                                <input
+                                  value={r.cells?.[k] ?? ''}
+                                  onChange={(e) => setCell(r.id, k, e.target.value)}
+                                  className={`${fieldCls} min-w-[160px]`}
+                                  placeholder={k}
+                                />
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             </div>
           ) : (
-            !hasErrors && (
+            !hasParseErrors && (
               <div className="py-8 text-center text-slate-500 text-sm border-2 border-dashed border-slate-200 rounded-xl">
                 No valid rows found.
               </div>
             )
           )}
+
+          {/* Pagination */}
+          <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between text-xs">
+            <div className="flex items-center gap-2 text-slate-500 font-semibold">
+              <span>Page</span>
+              <button type="button" onClick={() => setPage(p => Math.max(1, p - 1))} className="px-2 py-1 border border-slate-200 rounded-lg hover:bg-slate-50">Prev</button>
+              <span className="font-black text-slate-900">{safePage}</span>
+              <span>of {totalPages}</span>
+              <button type="button" onClick={() => setPage(p => Math.min(totalPages, p + 1))} className="px-2 py-1 border border-slate-200 rounded-lg hover:bg-slate-50">Next</button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-slate-500 font-semibold">Rows/page</span>
+              <select
+                value={pageSize}
+                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+                className="px-2 py-1 border border-slate-200 rounded-lg bg-white text-slate-700 font-bold"
+              >
+                {[5, 10, 20, 50].map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <button type="button" onClick={selectAllVisible} className="px-2 py-1 border border-slate-200 rounded-lg hover:bg-slate-50 font-bold text-slate-600">Select page</button>
+              <button type="button" onClick={selectNone} className="px-2 py-1 border border-slate-200 rounded-lg hover:bg-slate-50 font-bold text-slate-600">Clear</button>
+            </div>
+          </div>
 
           {/* Actions */}
           <div className="flex gap-3 pt-1">
@@ -325,13 +562,18 @@ export function LevelImportPanel({
               Cancel
             </button>
             <button
-              onClick={confirmImport}
-              disabled={selected.size === 0}
+              onClick={confirmUpload}
+              disabled={!canUpload}
               className={`flex-1 py-2.5 px-4 text-white rounded-xl text-sm font-bold transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed ${ac.btn}`}
             >
-              Import {selected.size > 0 ? `${selected.size} ` : ''}{TARGET_LABELS[target]}
+              Confirm Upload {activeRows.length > 0 ? `${activeRows.length} ` : ''}{TARGET_LABELS[target]}
             </button>
           </div>
+          {hasValidationErrors && (
+            <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl p-3 font-semibold">
+              Fix the highlighted cells before uploading.
+            </div>
+          )}
         </div>
       </div>
     );
@@ -393,14 +635,18 @@ export function LevelImportPanel({
               value={pasteText}
               onChange={(e) => setPasteText(e.target.value)}
               onPaste={(e) => {
-                // Let the paste happen then auto-parse after a tick
-                setTimeout(() => {
-                  const text = e.currentTarget.value;
-                  if (text.trim()) {
-                    setFileName('pasted data');
-                    runParse(text);
-                  }
-                }, 50);
+                // Paste fires before the clipboard is inserted; merge synchronously.
+                // Do not read e.currentTarget inside setTimeout — React clears it and .value throws.
+                const ta = e.currentTarget;
+                const clip = e.clipboardData.getData('text/plain');
+                const start = ta.selectionStart;
+                const end = ta.selectionEnd;
+                const next = ta.value.slice(0, start) + clip + ta.value.slice(end);
+                if (next.trim()) {
+                  setFileName('pasted data');
+                  setPasteText(next);
+                  runParse(next);
+                }
               }}
               className="w-full min-h-[160px] px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-y"
               placeholder={TARGET_PASTE_PLACEHOLDER[target]}
@@ -418,7 +664,7 @@ export function LevelImportPanel({
                 disabled={!pasteText.trim()}
                 className={`flex-1 py-2 text-sm font-bold text-white rounded-xl disabled:opacity-40 disabled:cursor-not-allowed transition-colors ${ac.btn}`}
               >
-                Parse Data
+                Re-parse from text
               </button>
             </div>
           </div>

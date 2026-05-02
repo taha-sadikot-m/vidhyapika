@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Trophy, Sparkles, CheckCircle2, XCircle, ChevronRight,
   RotateCcw, ClipboardCheck, Brain, AlertTriangle, Star,
-  LayoutGrid, PlayCircle, HelpCircle, Upload, Loader2, Trash2
+  LayoutGrid, PlayCircle, HelpCircle, Upload, Loader2, Trash2, AlertCircle,
 } from 'lucide-react';
 import { AIBadge } from './ui/AIBadge';
 import { AITeachingPanel } from './AITeachingPanel';
@@ -11,13 +11,19 @@ import { MathRenderer } from './MathRenderer';
 import { apiFetch } from '../hooks/useApi';
 import type { Question } from '../types';
 import { compressImagesToBase64 } from '../utils/imageCompress';
+import { parseAnswerImageUrls } from '../utils/quizAnswerDisplay';
+import { gradingFromSubmitResponse } from '../utils/quizGrading';
+import type { QuizSubmitGradingResult } from './InlineQuiz';
 
 interface FinalTestScreenProps {
   topicTitle: string;
   topicId?: string;
   questions: Question[];
   videosWatched: number;
+  /** Subtopic quizzes passed (modules with a quiz marked passed). */
   quizzesCompleted: number;
+  /** Subtopics that include a quiz — used to label stats (e.g. 3 / 4). */
+  subtopicQuizTotal?: number;
   onCompleted: () => void;
   onBack: () => void;
 }
@@ -30,6 +36,7 @@ export function FinalTestScreen({
   questions,
   videosWatched,
   quizzesCompleted,
+  subtopicQuizTotal,
   onCompleted,
   onBack,
 }: FinalTestScreenProps) {
@@ -41,6 +48,9 @@ export function FinalTestScreen({
   const [submitting, setSubmitting]     = useState(false);
   const [showConfirm, setShowConfirm]   = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [evaluationIncomplete, setEvaluationIncomplete] = useState(false);
+  const [reviewGrading, setReviewGrading] = useState<QuizSubmitGradingResult | null>(null);
+  const [passingThreshold, setPassingThreshold] = useState(60);
   const apiFailedQuestions              = useRef<{ questionId: string; text: string; type?: string; studentAnswer?: string; correctAnswer?: string; aiReasoning?: string }[]>([]);
 
   const q = questions[currentQ];
@@ -48,7 +58,7 @@ export function FinalTestScreen({
   const answeredCount = questions.reduce((a, qst) => a + (answers[qst.id] ? 1 : 0), 0);
   const pctDone = questions.length > 0 ? Math.round((answeredCount / questions.length) * 100) : 0;
   const pct = questions.length > 0 ? Math.round((score / questions.length) * 100) : 0;
-  const passed = pct >= 60;
+  const passed = !evaluationIncomplete && pct >= passingThreshold;
 
   const wrongAnswers = questions
     .filter(q => answers[q.id] && answers[q.id] !== q.correctAnswer)
@@ -77,14 +87,31 @@ export function FinalTestScreen({
             answers: answersArray,
           }),
         });
+        if (res.data?.passingThreshold != null) {
+          setPassingThreshold(Number(res.data.passingThreshold) || 60);
+        }
+        if (res.data?.evaluationIncomplete) {
+          const g = gradingFromSubmitResponse(res.data);
+          setReviewGrading(g);
+          setEvaluationIncomplete(true);
+          if (typeof res.data.score === 'number') localScore = res.data.score;
+          setScore(localScore);
+          setSubmitting(false);
+          setTestState('results');
+          return;
+        }
+        setEvaluationIncomplete(false);
+        setReviewGrading(gradingFromSubmitResponse(res.data));
         if (res.data?.failedQuestions) {
           apiFailedQuestions.current = res.data.failedQuestions;
         }
-        // Use server score (AI-evaluated) if available
         if (typeof res.data?.score === 'number') {
           localScore = res.data.score;
         }
       } catch {}
+    } else {
+      setEvaluationIncomplete(false);
+      setReviewGrading(null);
     }
     setScore(localScore);
     setSubmitting(false);
@@ -134,7 +161,13 @@ export function FinalTestScreen({
                 </p>
                 
                 <button
-                  onClick={() => { setCurrentQ(0); setAnswers({}); setTestState('testing'); }}
+                  onClick={() => {
+                    setCurrentQ(0);
+                    setAnswers({});
+                    setEvaluationIncomplete(false);
+                    setReviewGrading(null);
+                    setTestState('testing');
+                  }}
                   className="w-full sm:w-max px-12 py-5 flex items-center justify-center gap-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-xl font-black rounded-2xl transition-all shadow-lg hover:shadow-xl hover:-translate-y-1"
                 >
                   <ClipboardCheck className="w-6 h-6" /> Begin Final Test <ChevronRight className="w-6 h-6" />
@@ -149,10 +182,21 @@ export function FinalTestScreen({
                     <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100 flex flex-col items-center text-center">
                       <p className="text-4xl font-black text-slate-900 mb-1">{videosWatched}</p>
                       <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Videos Watched</p>
+                      <p className="text-[11px] font-semibold text-slate-400 mt-2 leading-snug">
+                        Lessons with a video you finished
+                      </p>
                     </div>
                     <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100 flex flex-col items-center text-center">
-                      <p className="text-4xl font-black text-slate-900 mb-1">{quizzesCompleted}</p>
+                      <p className="text-4xl font-black text-slate-900 mb-1 tabular-nums">
+                        {quizzesCompleted}
+                        {subtopicQuizTotal != null && subtopicQuizTotal > 0 ? (
+                          <span className="text-xl font-extrabold text-slate-400">/{subtopicQuizTotal}</span>
+                        ) : null}
+                      </p>
                       <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Quizzes Passed</p>
+                      <p className="text-[11px] font-semibold text-slate-400 mt-2 leading-snug">
+                        Subtopic quizzes cleared (required to reach this test)
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -478,33 +522,72 @@ export function FinalTestScreen({
             className="flex-1 bg-white overflow-y-auto h-full p-6 sm:p-10 lg:p-16"
           >
             <div className="w-full max-w-7xl mx-auto space-y-10">
+              {evaluationIncomplete && (
+                <div className="rounded-2xl border border-amber-300 bg-amber-50 p-5 sm:p-6 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <AlertCircle className="w-6 h-6 text-amber-700 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-black text-amber-900">AI could not finish grading</p>
+                      <p className="text-sm text-amber-800/90 mt-1 leading-relaxed">
+                        Your final test was not saved yet. Fix your connection if needed, then retry. You can also go back
+                        and edit answers.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setTestState('testing')}
+                      className="px-5 py-3 rounded-xl border-2 border-amber-800/30 bg-white text-amber-900 text-sm font-black hover:bg-amber-100/50 transition-colors"
+                    >
+                      Edit answers
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void submitTest()}
+                      disabled={submitting}
+                      className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white text-sm font-black disabled:opacity-60 transition-colors"
+                    >
+                      {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                      Retry evaluation
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Massive Score Card */}
-              <div className={`relative overflow-hidden flex flex-col md:flex-row items-center gap-8 md:gap-12 p-10 md:p-16 rounded-[3rem] border shadow-2xl ${passed ? 'bg-gradient-to-br from-emerald-500 to-teal-600 border-emerald-400' : 'bg-gradient-to-br from-red-500 to-rose-600 border-red-400'} text-white`}>
+              <div className={`relative overflow-hidden flex flex-col md:flex-row items-center gap-8 md:gap-12 p-10 md:p-16 rounded-[3rem] border shadow-2xl ${evaluationIncomplete ? 'bg-gradient-to-br from-amber-500 to-orange-600 border-amber-400' : passed ? 'bg-gradient-to-br from-emerald-500 to-teal-600 border-emerald-400' : 'bg-gradient-to-br from-red-500 to-rose-600 border-red-400'} text-white`}>
                 <div className="absolute -right-20 -top-20 w-96 h-96 bg-white/10 blur-3xl rounded-full" />
                 <div className="absolute -left-20 -bottom-20 w-80 h-80 bg-black/10 blur-3xl rounded-full" />
                 
                 <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 200, damping: 20 }}
                   className="w-32 h-32 md:w-40 md:h-40 bg-white/20 backdrop-blur-md rounded-[2rem] flex items-center justify-center shrink-0 border border-white/30 shadow-inner z-10"
                 >
-                  {passed ? <Trophy className="w-16 h-16 md:w-20 md:h-20 text-white" /> : <RotateCcw className="w-16 h-16 md:w-20 md:h-20 text-white" />}
+                  {evaluationIncomplete ? <AlertCircle className="w-16 h-16 md:w-20 md:h-20 text-white" /> : passed ? <Trophy className="w-16 h-16 md:w-20 md:h-20 text-white" /> : <RotateCcw className="w-16 h-16 md:w-20 md:h-20 text-white" />}
                 </motion.div>
                 
                 <div className="flex-1 text-center md:text-left z-10">
                   <p className="text-lg md:text-xl font-bold text-white/80 uppercase tracking-widest mb-2">Final Test Results</p>
-                  <h2 className="text-4xl md:text-6xl font-black mb-4">{passed ? 'Congratulations!' : 'Keep Going!'}</h2>
-                  <p className="text-xl md:text-2xl font-medium text-white/90">You scored {score} out of {questions.length} correct.</p>
+                  <h2 className="text-4xl md:text-6xl font-black mb-4">
+                    {evaluationIncomplete ? 'Grading incomplete' : passed ? 'Congratulations!' : 'Keep Going!'}
+                  </h2>
+                  <p className="text-xl md:text-2xl font-medium text-white/90">
+                    {evaluationIncomplete
+                      ? 'Open-ended questions need a successful AI check before your score is saved.'
+                      : <>You scored {score} out of {questions.length} correct.</>}
+                  </p>
                 </div>
                 
                 <div className="z-10 shrink-0">
                   <div className={`flex items-center justify-center w-40 h-40 md:w-48 md:h-48 rounded-full border-[12px] border-white/30 bg-black/10 backdrop-blur-sm`}>
-                    <span className="text-5xl md:text-6xl font-black">{pct}%</span>
+                    <span className="text-5xl md:text-6xl font-black">{evaluationIncomplete ? '—' : `${pct}%`}</span>
                   </div>
                 </div>
               </div>
 
               {/* Action Buttons */}
               <div className="flex flex-col sm:flex-row items-center gap-4 justify-center md:justify-end">
-                {passed ? (
+                {evaluationIncomplete ? null : passed ? (
                   <button onClick={handleTopicComplete} className="w-full sm:w-auto px-12 py-5 bg-gradient-to-r from-[#0084B4] to-[#006A91] text-white text-xl font-black rounded-2xl shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all flex items-center justify-center gap-3">
                     <Star className="w-6 h-6" /> Complete Topic <ChevronRight className="w-6 h-6" />
                   </button>
@@ -531,12 +614,17 @@ export function FinalTestScreen({
 
                 <div className="space-y-6">
                   {questions.map((ques, i) => {
-                    const isCorrect = answers[ques.id] === ques.correctAnswer;
+                    const pq = reviewGrading?.perQuestion[ques.id];
+                    const evalFailed = !!pq?.evaluationFailed;
+                    const isCorrect = pq
+                      ? !evalFailed && !!pq.correct
+                      : answers[ques.id] === ques.correctAnswer;
+                    const imgUrls = ques.type === 'image_upload' ? parseAnswerImageUrls(answers[ques.id] ?? '') : [];
                     return (
-                      <div key={ques.id} className={`rounded-3xl border p-6 md:p-8 ${isCorrect ? 'bg-emerald-50/50 border-emerald-100' : 'bg-red-50/50 border-red-100'}`}>
+                      <div key={ques.id} className={`rounded-3xl border p-6 md:p-8 ${evalFailed ? 'bg-amber-50/80 border-amber-200' : isCorrect ? 'bg-emerald-50/50 border-emerald-100' : 'bg-red-50/50 border-red-100'}`}>
                         <div className="flex items-start gap-4">
-                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${isCorrect ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
-                            {isCorrect ? <CheckCircle2 className="w-6 h-6" /> : <XCircle className="w-6 h-6" />}
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${evalFailed ? 'bg-amber-100 text-amber-700' : isCorrect ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
+                            {evalFailed ? <AlertCircle className="w-6 h-6" /> : isCorrect ? <CheckCircle2 className="w-6 h-6" /> : <XCircle className="w-6 h-6" />}
                           </div>
                           <div className="flex-1">
                             <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-2">Question {i + 1}</p>
@@ -547,15 +635,33 @@ export function FinalTestScreen({
                             <div className="grid md:grid-cols-2 gap-4">
                               <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
                                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Your Answer</p>
-                                <p className={`text-lg font-bold ${isCorrect ? 'text-emerald-700' : 'text-red-700'}`}>{answers[ques.id] ?? 'Skipped'}</p>
+                                {ques.type === 'image_upload' && imgUrls.length > 0 ? (
+                                  <div className="flex flex-wrap gap-2">
+                                    {imgUrls.map((url, ui) => (
+                                      <img key={ui} src={url} alt="" className="max-h-40 rounded-lg border border-slate-200 object-contain" />
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className={`text-lg font-bold ${evalFailed ? 'text-amber-800' : isCorrect ? 'text-emerald-700' : 'text-red-700'}`}>{answers[ques.id] ?? 'Skipped'}</p>
+                                )}
                               </div>
-                              {!isCorrect && (
+                              {!isCorrect && !evalFailed && (
                                 <div className="bg-emerald-50 p-5 rounded-2xl border border-emerald-100 shadow-sm">
                                   <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600/60 mb-2">Correct Answer</p>
                                   <p className="text-lg font-bold text-emerald-700">{ques.correctAnswer}</p>
                                 </div>
                               )}
                             </div>
+
+                            {(evalFailed || pq?.aiReasoning) && (
+                              <div className={`mt-4 p-5 rounded-2xl border flex items-start gap-3 ${evalFailed ? 'bg-amber-50 border-amber-200' : 'bg-violet-50 border-violet-100'}`}>
+                                {evalFailed ? <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" /> : <Sparkles className="w-5 h-5 text-violet-600 shrink-0 mt-0.5" />}
+                                <div>
+                                  <p className="text-[10px] font-black uppercase tracking-widest mb-1 text-slate-600">AI note</p>
+                                  <p className="text-sm font-medium text-slate-800 whitespace-pre-wrap">{pq?.aiReasoning ?? (evalFailed ? 'Use “Retry evaluation” above.' : '')}</p>
+                                </div>
+                              </div>
+                            )}
                             
                             {ques.explanation && (
                               <div className="mt-4 p-5 bg-blue-50 border border-blue-100 rounded-2xl flex items-start gap-3">

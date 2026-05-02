@@ -2,10 +2,13 @@ import { verifyJWT, requireAdmin } from "../../../../../../backend/middleware/au
 import { getDb } from "../../../../../../backend/firebase/admin";
 import {
   getTopic,
+  getClass,
   listSubTopics,
   listPrerequisites,
-  getAllClasses,
 } from "../../../../../../backend/repositories/curriculumRepo";
+import { isFirestoreResourceExhausted } from "../../../../../../backend/utils/firestoreErrors";
+import { ADMIN_JSON_CACHE_CONTROL } from "../../../../../../backend/utils/adminApiCache";
+import { getUsersByIds } from "../../../../../../backend/repositories/userRepo";
 
 export async function GET(
   req: Request,
@@ -18,6 +21,7 @@ export async function GET(
   const { id: topicId } = await params;
   const db = getDb();
 
+  try {
   // ── Curriculum data ───────────────────────────────────────────────────────
   const [topic, prerequisites, subtopics] = await Promise.all([
     getTopic(topicId),
@@ -156,25 +160,7 @@ export async function GET(
   });
 
   // ── Struggling students (flagged or stuck on prereq) ─────────────────────
-  // Fetch user names for flagged student IDs
   const flaggedIds = [...flaggedStudentIds].slice(0, 20);
-  let strugglingStudents: { id: string; name: string | null; email: string; status: string }[] = [];
-
-  if (flaggedIds.length > 0) {
-    const userDocs = await Promise.all(
-      flaggedIds.map((id) => db.collection("users").doc(id).get())
-    );
-    strugglingStudents = userDocs
-      .filter((d) => d.exists)
-      .map((d) => ({
-        id: d.id,
-        name: d.data()?.name ?? null,
-        email: d.data()?.email ?? "",
-        status: "flagged",
-      }));
-  }
-
-  // Also include students stuck on prereq (attempted but never passed)
   const stuckOnPrereq = topicProgress
     .filter(
       (p) =>
@@ -184,39 +170,69 @@ export async function GET(
     )
     .slice(0, 10);
 
-  if (stuckOnPrereq.length > 0) {
-    const stuckDocs = await Promise.all(
-      stuckOnPrereq.map((p) => db.collection("users").doc(p.studentId).get())
-    );
-    for (const d of stuckDocs) {
-      if (d.exists) {
-        strugglingStudents.push({
-          id: d.id,
-          name: d.data()?.name ?? null,
-          email: d.data()?.email ?? "",
-          status: "stuck",
-        });
-      }
+  const userIdsForStruggling = [
+    ...flaggedIds,
+    ...stuckOnPrereq.map((p) => p.studentId),
+  ];
+  const strugglingUsers = await getUsersByIds(userIdsForStruggling);
+
+  const strugglingStudents: { id: string; name: string | null; email: string; status: string }[] =
+    [];
+  for (const id of flaggedIds) {
+    const u = strugglingUsers.get(id);
+    if (u) {
+      strugglingStudents.push({
+        id,
+        name: u.name ?? null,
+        email: u.email ?? "",
+        status: "flagged",
+      });
+    }
+  }
+  for (const p of stuckOnPrereq) {
+    const u = strugglingUsers.get(p.studentId);
+    if (u) {
+      strugglingStudents.push({
+        id: p.studentId,
+        name: u.name ?? null,
+        email: u.email ?? "",
+        status: "stuck",
+      });
     }
   }
 
-  // ── Class info ────────────────────────────────────────────────────────────
-  const allClasses = await getAllClasses();
-  const cls = allClasses.find((c) => c.id === topic.classId);
+  // ── Class info (single doc read, not full collection scan) ────────────────
+  const cls = await getClass(topic.classId);
 
-  return Response.json({
-    topic: {
-      id: topic.id,
-      name: topic.name,
-      description: topic.description ?? null,
-      classId: topic.classId,
-      className: cls?.name ?? "",
-      finalTestThreshold: topic.finalTestThreshold,
+  return Response.json(
+    {
+      topic: {
+        id: topic.id,
+        name: topic.name,
+        description: topic.description ?? null,
+        classId: topic.classId,
+        className: cls?.name ?? "",
+        finalTestThreshold: topic.finalTestThreshold,
+      },
+      funnel,
+      subtopicStats,
+      prereqStats,
+      strugglingStudents,
+      totalAISessions: aiSessions.length,
     },
-    funnel,
-    subtopicStats,
-    prereqStats,
-    strugglingStudents,
-    totalAISessions: aiSessions.length,
-  });
+    { headers: { "Cache-Control": ADMIN_JSON_CACHE_CONTROL } }
+  );
+  } catch (e) {
+    if (isFirestoreResourceExhausted(e)) {
+      console.error("[GET /api/admin/analytics/topic/:id] Firestore quota exceeded", e);
+      return Response.json(
+        {
+          error: "Database quota exceeded. Try again later or upgrade your Firebase plan.",
+          code: "firestore_quota",
+        },
+        { status: 503 }
+      );
+    }
+    throw e;
+  }
 }

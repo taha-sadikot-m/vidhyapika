@@ -3,8 +3,10 @@ import { verifyJWT, requireAdmin } from "../../../../backend/middleware/auth";
 import { listUsersByRole, createUser } from "../../../../backend/repositories/userRepo";
 import { hashPassword } from "../../../../backend/services/auth";
 import { sendEnrollmentNotifications } from "../../../../backend/services/notifications";
-import { enrollStudent, syncStudentEnrollments } from "../../../../backend/repositories/curriculumRepo";
+import { syncStudentEnrollments } from "../../../../backend/repositories/curriculumRepo";
 import { getDb } from "../../../../backend/firebase/admin";
+import { queryDocumentsWhereIn } from "../../../../backend/utils/firestoreQuery";
+import { ADMIN_JSON_CACHE_CONTROL } from "../../../../backend/utils/adminApiCache";
 import { z } from "zod";
 
 const CreateStudentSchema = z.object({
@@ -28,23 +30,50 @@ export async function GET(req: Request) {
   if (err) return err;
 
   const students = await listUsersByRole("student");
-  
-  // Attach all class enrollments to students for the UI
+
   const db = getDb();
-  const enrollmentsSnap = await db.collection("classEnrollments").get();
+  const studentIds = students.map((s) => s.id);
+  const enrollmentDocs = await queryDocumentsWhereIn(
+    db,
+    "classEnrollments",
+    "studentId",
+    studentIds
+  );
   const enrollmentsMap: Record<string, string[]> = {};
-  enrollmentsSnap.docs.forEach((doc: any) => {
+  for (const doc of enrollmentDocs) {
     const data = doc.data();
     if (!enrollmentsMap[data.studentId]) enrollmentsMap[data.studentId] = [];
     enrollmentsMap[data.studentId].push(data.classId);
+  }
+
+  /** Parent users store parentId = student id; merge when student doc has no parentName/parentEmail. */
+  const parentByStudentId = new Map<string, { name: string | null; email: string | null }>();
+  const chunkSize = 30;
+  for (let i = 0; i < studentIds.length; i += chunkSize) {
+    const chunk = studentIds.slice(i, i + chunkSize);
+    if (chunk.length === 0) continue;
+    const parentSnap = await db.collection("users").where("parentId", "in", chunk).get();
+    for (const d of parentSnap.docs) {
+      const data = d.data() as { role?: string; parentId?: string; name?: string | null; email?: string };
+      if (data.role !== "parent" || !data.parentId) continue;
+      if (!parentByStudentId.has(data.parentId)) {
+        parentByStudentId.set(data.parentId, { name: data.name ?? null, email: data.email ?? null });
+      }
+    }
+  }
+
+  const studentsWithClasses = students.map((s: any) => {
+    const classIds = enrollmentsMap[s.id] || (s.class_id ? [s.class_id] : []);
+    const link = parentByStudentId.get(s.id);
+    const parentName = (s.parentName && String(s.parentName).trim()) || link?.name || null;
+    const parentEmail = (s.parentEmail && String(s.parentEmail).trim()) || link?.email || null;
+    return { ...s, classIds, parentName, parentEmail };
   });
 
-  const studentsWithClasses = students.map((s: any) => ({
-    ...s,
-    classIds: enrollmentsMap[s.id] || (s.class_id ? [s.class_id] : []),
-  }));
-
-  return Response.json({ students: studentsWithClasses });
+  return Response.json(
+    { students: studentsWithClasses },
+    { headers: { "Cache-Control": ADMIN_JSON_CACHE_CONTROL } }
+  );
 }
 
 export async function POST(req: Request) {

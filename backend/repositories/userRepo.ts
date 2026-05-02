@@ -42,9 +42,18 @@ function docToUserRow(id: string, data: FirebaseFirestore.DocumentData): UserRow
     parent_id: data.parentId ?? null,
     class_id: data.classId ?? null,
     phone: data.phone ?? null,
-    parentName: data.parentName ?? null,
-    parentEmail: data.parentEmail ?? null,
+    parentName: data.parentName ?? data.parent_name ?? null,
+    parentEmail: data.parentEmail ?? data.parent_email ?? null,
   };
+}
+
+/** Parent accounts store parentId = linked student's user id. Used when student doc lacks parentName/parentEmail. */
+export async function getParentUserLinkedToStudent(studentId: string): Promise<UserRow | null> {
+  const db = getDb();
+  const snap = await db.collection("users").where("parentId", "==", studentId).limit(10).get();
+  const doc = snap.docs.find((d) => (d.data().role ?? "") === "parent");
+  if (!doc) return null;
+  return docToUserRow(doc.id, doc.data());
 }
 
 export async function getUserByEmail(email: string): Promise<UserRow | null> {
@@ -78,6 +87,24 @@ export async function getUserById(id: string): Promise<UserRow | null> {
   const doc = await db.collection("users").doc(id).get();
   if (!doc.exists) return null;
   return docToUserRow(doc.id, doc.data()!);
+}
+
+/** Batch fetch by id (deduped). Chunks to stay within Firestore batch-get limits. */
+export async function getUsersByIds(ids: string[]): Promise<Map<string, UserRow>> {
+  const uniq = [...new Set(ids.filter(Boolean))];
+  const map = new Map<string, UserRow>();
+  if (uniq.length === 0) return map;
+  const db = getDb();
+  const chunkSize = 10;
+  for (let i = 0; i < uniq.length; i += chunkSize) {
+    const chunk = uniq.slice(i, i + chunkSize);
+    const refs = chunk.map((id) => db.collection("users").doc(id));
+    const snaps = await db.getAll(...refs);
+    for (const snap of snaps) {
+      if (snap.exists) map.set(snap.id, docToUserRow(snap.id, snap.data()!));
+    }
+  }
+  return map;
 }
 
 export async function setUserPassword(params: {
@@ -206,6 +233,30 @@ export async function deleteUser(id: string) {
 export async function listUsersByRole(role: string): Promise<UserRow[]> {
   const db = getDb();
   const snap = await db.collection("users").where("role", "==", role).get();
+  return snap.docs.map((d) => docToUserRow(d.id, d.data()));
+}
+
+/** Count aggregation — 1 read op, not 1 per document. */
+export async function countUsersByRole(role: string): Promise<number> {
+  const snap = await getDb()
+    .collection("users")
+    .where("role", "==", role)
+    .count()
+    .get();
+  return snap.data().count;
+}
+
+/**
+ * Most recently created users for a role. Requires `createdAt` on documents (new users have it).
+ * Composite index: users — role Asc, createdAt Desc
+ */
+export async function listRecentUsersByRole(role: string, limit: number): Promise<UserRow[]> {
+  const snap = await getDb()
+    .collection("users")
+    .where("role", "==", role)
+    .orderBy("createdAt", "desc")
+    .limit(Math.max(1, Math.min(limit, 50)))
+    .get();
   return snap.docs.map((d) => docToUserRow(d.id, d.data()));
 }
 

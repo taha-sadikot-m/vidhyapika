@@ -7,12 +7,17 @@ import {
   getTopicProgress,
   getSubTopicProgress,
 } from "../../../../backend/repositories/progressRepo";
-import { getTopic, getSubTopic } from "../../../../backend/repositories/curriculumRepo";
+import { getTopic, getSubTopic, getPrerequisite } from "../../../../backend/repositories/curriculumRepo";
+import { countFailedAiRetakes } from "../../../../backend/repositories/progressRepo";
 import { z } from "zod";
+
+const MAX_AI_COACHING_CYCLES = 3;
 
 const TeachSchema = z.object({
   topicId: z.string().min(1),
   subTopicId: z.string().optional(),
+  /** Prereq id, or other quiz scope id when multiple quizzes share the same topic */
+  contextId: z.string().optional(),
   contextType: z.enum(["prereq", "subtopic", "finaltest"]),
   failedQuestions: z.array(
     z.object({
@@ -34,14 +39,41 @@ export async function POST(req: Request) {
 
   try {
     const body = TeachSchema.parse(await req.json());
-    const { topicId, subTopicId, contextType, failedQuestions } = body;
-
+    const { topicId, subTopicId, contextType, failedQuestions, contextId: contextIdBody } = body;
     const [topic, subTopic] = await Promise.all([
       getTopic(topicId),
       subTopicId ? getSubTopic(subTopicId) : Promise.resolve(null),
     ]);
 
     if (!topic) return Response.json({ error: "Topic not found" }, { status: 404 });
+
+    let resolvedContextId =
+      contextIdBody ??
+      (contextType === "subtopic" && subTopicId ? subTopicId : null) ??
+      null;
+    if (!resolvedContextId && contextType === "prereq") {
+      const pr = await getPrerequisite(topicId);
+      resolvedContextId = pr?.id ?? null;
+    }
+    if (!resolvedContextId && contextType === "finaltest") {
+      resolvedContextId = topicId;
+    }
+
+    if (resolvedContextId) {
+      const failedAi = await countFailedAiRetakes(studentId, contextType, resolvedContextId);
+      if (failedAi >= MAX_AI_COACHING_CYCLES) {
+        return Response.json(
+          {
+            error:
+              "You have used all AI coaching and retest attempts for this quiz. Please contact your instructor for help.",
+            code: "AI_COACHING_CAP",
+            failedAiRetakes: failedAi,
+            maxAiCoachingCycles: MAX_AI_COACHING_CYCLES,
+          },
+          { status: 403 }
+        );
+      }
+    }
 
     // Generate AI lesson cards
     const lessonCards = await generateLessonCards({
@@ -62,6 +94,7 @@ export async function POST(req: Request) {
     const sessionId = await createAISession({
       studentId,
       topicId,
+      contextId: resolvedContextId,
       subTopicId: subTopicId ?? null,
       contextType,
       messages: [

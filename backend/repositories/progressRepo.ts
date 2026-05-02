@@ -54,10 +54,12 @@ export type AISessionRecord = {
   id: string;
   studentId: string;
   topicId: string;
+  /** Prerequisite id, subtopic quiz step, etc. — narrows sessions to one quiz context */
+  contextId?: string | null;
   subTopicId?: string | null;
   contextType: "prereq" | "subtopic" | "finaltest";
   messages: { role: "tutor" | "student"; content: string; timestamp: number }[];
-  lessonCards?: { title: string; content: string }[];
+  lessonCards?: { title: string; content: string; latex?: string }[];
   mistakes?: {
     questionId: string;
     mistakeTitle: string;
@@ -243,6 +245,16 @@ export async function listQuizAttempts(
     });
 }
 
+/** How many saved AI-generated quiz attempts did not pass the threshold (coaching / retake loop cap). */
+export async function countFailedAiRetakes(
+  studentId: string,
+  contextType: QuizAttemptRecord["contextType"],
+  contextId: string
+): Promise<number> {
+  const attempts = await listQuizAttempts(studentId, contextType, contextId);
+  return attempts.filter((a) => a.aiGenerated && !a.passed).length;
+}
+
 // ─── AI Sessions ──────────────────────────────────────────────────────────────
 
 export async function createAISession(
@@ -299,10 +311,16 @@ export async function createFlag(
   return ref.id;
 }
 
-export async function listFlaggedStudents(onlyUnresolved = true): Promise<FlaggedStudent[]> {
+export async function listFlaggedStudents(
+  onlyUnresolved = true,
+  maxDocs?: number
+): Promise<FlaggedStudent[]> {
   let query = getDb().collection("flaggedStudents") as FirebaseFirestore.Query;
   if (onlyUnresolved) {
     query = query.where("resolvedAt", "==", null);
+  }
+  if (maxDocs != null && maxDocs > 0) {
+    query = query.limit(maxDocs);
   }
   const snap = await query.get();
   return snap.docs

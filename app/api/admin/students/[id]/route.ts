@@ -1,6 +1,11 @@
 import { verifyJWT, requireAdmin } from "../../../../../backend/middleware/auth";
-import { getUserById, updateUser, deleteUser } from "../../../../../backend/repositories/userRepo";
-import { enrollStudent, syncStudentEnrollments } from "../../../../../backend/repositories/curriculumRepo";
+import {
+  getUserById,
+  getParentUserLinkedToStudent,
+  updateUser,
+  deleteUser,
+} from "../../../../../backend/repositories/userRepo";
+import { syncStudentEnrollments, getStudentEnrollments } from "../../../../../backend/repositories/curriculumRepo";
 import { z } from "zod";
 
 const UpdateSchema = z.object({
@@ -19,7 +24,27 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const { id } = await params;
   const student = await getUserById(id);
   if (!student || student.role !== "student") return Response.json({ error: "Not found" }, { status: 404 });
-  return Response.json({ student });
+
+  const enrollments = await getStudentEnrollments(id);
+  const classIds = enrollments.map((e) => e.classId);
+  if (classIds.length === 0 && student.class_id) {
+    classIds.push(student.class_id);
+  }
+
+  const linkedParent = await getParentUserLinkedToStudent(id);
+  const parentName =
+    (student.parentName && String(student.parentName).trim()) || linkedParent?.name || null;
+  const parentEmail =
+    (student.parentEmail && String(student.parentEmail).trim()) || linkedParent?.email || null;
+
+  return Response.json({
+    student: {
+      ...student,
+      classIds,
+      parentName,
+      parentEmail,
+    },
+  });
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -33,10 +58,16 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     if (!before || before.role !== "student") return Response.json({ error: "Not found" }, { status: 404 });
 
     const body = UpdateSchema.parse(await req.json());
-    await updateUser(id, body);
+    const { classIds, ...rest } = body;
+    const patch: Record<string, unknown> = {};
+    if (rest.name !== undefined) patch.name = rest.name;
+    if (rest.phone !== undefined) patch.phone = rest.phone;
+    if (rest.parentName !== undefined) patch.parentName = rest.parentName;
+    if (rest.parentEmail !== undefined) patch.parentEmail = rest.parentEmail;
+    if (Object.keys(patch).length > 0) await updateUser(id, patch as Parameters<typeof updateUser>[1]);
 
-    if (body.classIds) {
-      await syncStudentEnrollments(id, body.classIds);
+    if (classIds) {
+      await syncStudentEnrollments(id, classIds);
     }
 
     return Response.json({ success: true });

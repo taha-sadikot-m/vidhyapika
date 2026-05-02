@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { AdminLayout } from '../../components/AdminLayout';
 import { Modal } from '../../components/ui/Modal';
 import {
@@ -16,6 +16,7 @@ type Student = {
   email: string;
   role: string;
   class_id?: string | null;
+  classIds?: string[];
   parentName?: string | null;
   parentEmail?: string | null;
   phone?: string | null;
@@ -86,15 +87,48 @@ export function AdminStudents() {
   const [form, setForm]   = useState<any>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [selectedStandardId, setSelectedStandardId] = useState('');
 
-  const openModal = (type: string, payload: any = null) => {
+  const openModal = async (type: string, payload: any = null) => {
     setSaveError(null);
     setModal({ open: true, type, payload });
+    if (type === 'edit' && payload?.id) {
+      const { data, error } = await apiFetch<{
+        student: Student & { classIds?: string[] };
+      }>(`/api/admin/students/${payload.id}`);
+      if (data?.student) {
+        const st = data.student;
+        setForm({
+          name: st.name ?? '',
+          email: st.email,
+          phone: st.phone ?? '',
+          classIds: Array.isArray(st.classIds) ? st.classIds : payload.classIds ?? [],
+          parentName: st.parentName ?? '',
+          parentEmail: st.parentEmail ?? '',
+        });
+        return;
+      }
+      if (error) setSaveError(error);
+      setForm({
+        name: payload.name ?? '',
+        email: payload.email,
+        phone: payload.phone ?? '',
+        classIds: payload.classIds ?? [],
+        parentName: payload.parentName ?? '',
+        parentEmail: payload.parentEmail ?? '',
+      });
+      return;
+    }
     if (type === 'edit') {
-      setForm({ name: payload.name ?? '', email: payload.email, phone: payload.phone ?? '', classIds: payload.classIds ?? [] });
+      setForm({
+        name: payload.name ?? '',
+        email: payload.email,
+        phone: payload.phone ?? '',
+        classIds: payload.classIds ?? [],
+        parentName: payload.parentName ?? '',
+        parentEmail: payload.parentEmail ?? '',
+      });
     } else {
-      setForm({ sendEmail: true, classIds: [] });
+      setForm({ sendEmail: true, classIds: [], parentName: '', parentEmail: '' });
     }
   };
   const closeModal = () => { setModal({ open: false, type: '', payload: null }); setSaveError(null); };
@@ -185,7 +219,22 @@ export function AdminStudents() {
     return new Date(ts).toLocaleDateString();
   };
 
-  const currentClasses = classesMap[selectedStandardId] ?? [];
+  const classIndex = useMemo(() => {
+    const byId = new Map<string, ApiClass>();
+    for (const list of Object.values(classesMap)) {
+      for (const c of list) byId.set(c.id, c);
+    }
+    return byId;
+  }, [classesMap]);
+
+  const enrollmentMeta = useCallback(
+    (classId: string) => {
+      const cls = classIndex.get(classId);
+      const stdName = cls ? standards.find((s) => s.id === cls.standardId)?.name : undefined;
+      return { cls, stdName: stdName ?? 'Standard' };
+    },
+    [classIndex, standards]
+  );
 
   // ─── Render ──────────────────────────────────────────────────────────────
 
@@ -316,7 +365,12 @@ export function AdminStudents() {
       </div>
 
       {/* ── Add / Edit Student Modal ────────────────────────────────────────────── */}
-      <Modal isOpen={modal.open && (modal.type === 'add' || modal.type === 'edit')} onClose={closeModal} title={modal.type === 'add' ? 'Add Student' : 'Edit Student'}>
+      <Modal
+        isOpen={modal.open && (modal.type === 'add' || modal.type === 'edit')}
+        onClose={closeModal}
+        title={modal.type === 'add' ? 'Add Student' : 'Edit Student'}
+        size="3xl"
+      >
         <form onSubmit={handleSave} className="space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1.5">
@@ -339,26 +393,81 @@ export function AdminStudents() {
             </div>
           </div>
 
-          {/* Class enrollment */}
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Enrollments</label>
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 max-h-48 overflow-y-auto space-y-4">
-              {standards.map(std => {
+          {/* Class enrollment — multiple classes across standards */}
+          <div className="space-y-3">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Class enrollments</label>
+              <p className="text-[11px] font-medium text-slate-500">
+                {(form.classIds || []).length} class{(form.classIds || []).length === 1 ? '' : 'es'} selected · same student can join multiple
+              </p>
+            </div>
+
+            {(form.classIds || []).length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {(form.classIds || []).map((cid: string) => {
+                  const { cls, stdName } = enrollmentMeta(cid);
+                  return (
+                    <span
+                      key={cid}
+                      className="inline-flex items-center gap-1 max-w-full pl-2.5 pr-1 py-1 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-900 text-xs font-semibold"
+                    >
+                      <span className="truncate min-w-0">
+                        {cls?.name ?? 'Class'}
+                        <span className="font-normal text-indigo-500"> · {stdName}</span>
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${cls?.name ?? 'class'}`}
+                        onClick={() =>
+                          setForm({
+                            ...form,
+                            classIds: (form.classIds || []).filter((id: string) => id !== cid),
+                          })
+                        }
+                        className="shrink-0 p-1 rounded-md hover:bg-indigo-100 text-indigo-600 transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="rounded-xl border border-slate-200 bg-white max-h-[min(42vh,360px)] overflow-y-auto divide-y divide-slate-100 shadow-sm">
+              {standards.map((std) => {
                 const stdClasses = classesMap[std.id] || [];
                 if (stdClasses.length === 0) return null;
+                const ids = form.classIds || [];
+                const selectedInStd = stdClasses.filter((c) => ids.includes(c.id)).length;
                 return (
-                  <div key={std.id} className="space-y-2">
-                    <p className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">{std.name}</p>
-                    <div className="flex flex-wrap gap-2">
-                      {stdClasses.map(cls => {
-                        const isSelected = (form.classIds || []).includes(cls.id);
+                  <details key={std.id} className="group" open={selectedInStd > 0}>
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-bold text-slate-800 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+                      <span className="flex items-center gap-2 min-w-0">
+                        <BookOpen className="w-4 h-4 shrink-0 text-indigo-500" />
+                        <span className="truncate">{std.name}</span>
+                      </span>
+                      <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-indigo-700 tabular-nums">
+                        {selectedInStd}/{stdClasses.length}
+                      </span>
+                    </summary>
+                    <div className="flex flex-wrap gap-2 px-4 pb-4 pt-0">
+                      {stdClasses.map((cls) => {
+                        const isSelected = ids.includes(cls.id);
                         return (
-                          <label key={cls.id} className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`}>
+                          <label
+                            key={cls.id}
+                            className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
+                              isSelected
+                                ? 'bg-indigo-50 border-indigo-200 text-indigo-800'
+                                : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-slate-300'
+                            }`}
+                          >
                             <input
                               type="checkbox"
                               checked={isSelected}
                               onChange={(e) => {
-                                const newIds = e.target.checked 
+                                const newIds = e.target.checked
                                   ? [...(form.classIds || []), cls.id]
                                   : (form.classIds || []).filter((id: string) => id !== cls.id);
                                 setForm({ ...form, classIds: newIds });
@@ -370,10 +479,12 @@ export function AdminStudents() {
                         );
                       })}
                     </div>
-                  </div>
+                  </details>
                 );
               })}
-              {standards.length === 0 && <p className="text-xs text-slate-400">Loading standards...</p>}
+              {standards.length === 0 && (
+                <p className="px-4 py-6 text-center text-xs text-slate-400">Loading standards…</p>
+              )}
             </div>
           </div>
 
