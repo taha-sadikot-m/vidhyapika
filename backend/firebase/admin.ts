@@ -19,15 +19,37 @@ function normalizePrivateKey(raw: string | undefined): string | undefined {
   return k;
 }
 
+function assertPemPrivateKey(privateKey: string, source: "FIREBASE_PRIVATE_KEY" | "FIREBASE_PRIVATE_KEY_BASE64") {
+  const okPkcs8 =
+    privateKey.includes("BEGIN PRIVATE KEY") && privateKey.includes("END PRIVATE KEY");
+  const okRsa =
+    privateKey.includes("BEGIN RSA PRIVATE KEY") && privateKey.includes("END RSA PRIVATE KEY");
+  if (!okPkcs8 && !okRsa) {
+    throw new Error(
+      `Invalid ${source}: must be a PEM private key (PKCS#8 or RSA). ` +
+        "Regenerate from Firebase Console → Project settings → Service accounts → Generate new private key, " +
+        "and set project id, client email, and private key from the same JSON file."
+    );
+  }
+}
+
 function getAdminApp(): App {
   if (getApps().length > 0) return getApps()[0]!;
 
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey =
-    process.env.FIREBASE_PRIVATE_KEY_BASE64
-      ? Buffer.from(process.env.FIREBASE_PRIVATE_KEY_BASE64, "base64").toString("utf8")
-      : normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY);
+  const projectId = process.env.FIREBASE_PROJECT_ID?.trim();
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
+  let privateKey: string | undefined;
+  if (process.env.FIREBASE_PRIVATE_KEY_BASE64?.trim()) {
+    try {
+      privateKey = Buffer.from(process.env.FIREBASE_PRIVATE_KEY_BASE64.trim(), "base64").toString("utf8");
+    } catch {
+      throw new Error("Invalid FIREBASE_PRIVATE_KEY_BASE64: not valid base64.");
+    }
+    assertPemPrivateKey(privateKey, "FIREBASE_PRIVATE_KEY_BASE64");
+  } else {
+    privateKey = normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY);
+    if (privateKey) assertPemPrivateKey(privateKey, "FIREBASE_PRIVATE_KEY");
+  }
   const storageBucket = process.env.FIREBASE_STORAGE_BUCKET;
 
   if (!projectId || !clientEmail || !privateKey) {
