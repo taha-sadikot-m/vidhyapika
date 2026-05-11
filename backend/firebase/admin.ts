@@ -41,7 +41,8 @@ function getAdminApp(): App {
   let privateKey: string | undefined;
   if (process.env.FIREBASE_PRIVATE_KEY_BASE64?.trim()) {
     try {
-      privateKey = Buffer.from(process.env.FIREBASE_PRIVATE_KEY_BASE64.trim(), "base64").toString("utf8");
+      const b64 = process.env.FIREBASE_PRIVATE_KEY_BASE64.trim().replace(/\s+/g, "");
+      privateKey = Buffer.from(b64, "base64").toString("utf8");
     } catch {
       throw new Error("Invalid FIREBASE_PRIVATE_KEY_BASE64: not valid base64.");
     }
