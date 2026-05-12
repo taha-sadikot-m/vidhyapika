@@ -39,17 +39,25 @@ function getAdminApp(): App {
   const projectId = process.env.FIREBASE_PROJECT_ID?.trim();
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
   let privateKey: string | undefined;
-  if (process.env.FIREBASE_PRIVATE_KEY_BASE64?.trim()) {
+
+  // Prefer explicit PEM in FIREBASE_PRIVATE_KEY when present. On dev machines, a stale or
+  // wrong FIREBASE_PRIVATE_KEY_BASE64 in the OS environment can override a good .env.local
+  // if we always prefer base64 first.
+  const pemFromEnv = normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY);
+  if (pemFromEnv) {
+    privateKey = pemFromEnv;
+    assertPemPrivateKey(privateKey, "FIREBASE_PRIVATE_KEY");
+  } else if (process.env.FIREBASE_PRIVATE_KEY_BASE64?.trim()) {
     try {
       const b64 = process.env.FIREBASE_PRIVATE_KEY_BASE64.trim().replace(/\s+/g, "");
-      privateKey = Buffer.from(b64, "base64").toString("utf8");
+      // After decoding, still normalize in case user base64-encoded a value that contained
+      // surrounding quotes or literal "\\n" sequences.
+      privateKey = normalizePrivateKey(Buffer.from(b64, "base64").toString("utf8"));
     } catch {
       throw new Error("Invalid FIREBASE_PRIVATE_KEY_BASE64: not valid base64.");
     }
+    if (!privateKey) throw new Error("Invalid FIREBASE_PRIVATE_KEY_BASE64: decoded to empty string.");
     assertPemPrivateKey(privateKey, "FIREBASE_PRIVATE_KEY_BASE64");
-  } else {
-    privateKey = normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY);
-    if (privateKey) assertPemPrivateKey(privateKey, "FIREBASE_PRIVATE_KEY");
   }
   const storageBucket = process.env.FIREBASE_STORAGE_BUCKET;
 
